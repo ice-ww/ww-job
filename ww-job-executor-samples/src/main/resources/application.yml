@@ -3,3 +3,11 @@ server:
 spring:
   application:
     name: ww-job-executor-samples
+
+# 执行器配置（app-name 是自动配置的触发开关）
+wwjob:
+  executor:
+    app-name: sample-executor
+    admin-addresses: http://localhost:8080
+    port: 8081
+    heartbeat-interval-seconds: 30
