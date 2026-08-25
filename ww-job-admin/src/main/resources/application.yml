@@ -3,12 +3,19 @@ server:
 spring:
   application:
     name: ww-job-admin
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/schema.sql
   datasource:
     url: jdbc:mysql://localhost:3306/ww_job?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
     username: root
-    password: root
+    password: PASSWORD_REMOVED
     driver-class-name: com.mysql.cj.jdbc.Driver
   data:
     redis:
       host: localhost
       port: 6379
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
