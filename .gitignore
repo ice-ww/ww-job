@@ -1,0 +1,36 @@
+# ===== Java / Maven =====
+target/
+*.class
+*.jar
+*.war
+*.ear
+.mvn/wrapper/maven-wrapper.jar
+.flattened-pom.xml
+
+# ===== IDE =====
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# ===== 前端 / Node =====
+node_modules/
+dist/
+.vite/
+*.local
+
+# ===== 日志 =====
+logs/
+*.log
+
+# ===== 系统 =====
+.DS_Store
+Thumbs.db
+*.swp
+
+# ===== 环境 / 密钥（本地配置不入库）=====
+application-local.yml
+application-local.properties
+.env
