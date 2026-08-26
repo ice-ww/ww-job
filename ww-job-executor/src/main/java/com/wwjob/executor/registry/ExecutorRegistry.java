@@ -8,6 +8,7 @@ package com.wwjob.executor.registry;
 import com.wwjob.core.model.RegistryParam;
 import com.wwjob.executor.ExecutorProperties;
 import jakarta.annotation.PostConstruct;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.web.client.RestTemplate;
 
@@ -18,9 +19,16 @@ import java.net.InetAddress;
  */
 public class ExecutorRegistry {
     private final ExecutorProperties props;
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate;
 
-    public ExecutorRegistry(ExecutorProperties props) { this.props = props; }
+    public ExecutorRegistry(ExecutorProperties props) {
+        this.props = props;
+        // @Scheduled 默认单线程：心跳若无限阻塞，后续心跳全部停摆，执行器会被 90s 后误判下线。故加超时
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(3000);
+        factory.setReadTimeout(10000);
+        this.restTemplate = new RestTemplate(factory);
+    }
 
     @PostConstruct
     public void register() { doRegister(); }

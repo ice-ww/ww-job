@@ -12,6 +12,8 @@ import org.springframework.stereotype.Component;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * @author 王威
@@ -28,6 +30,14 @@ public class ScheduleHelper {
     private final TimeWheel timeWheel = new TimeWheel(TICK_MS, WHEEL_SIZE);
     /** 已放入时间轮等待触发的任务 id，防止同一任务被重复入轮 */
     private final Set<Long> scheduledJobIds = ConcurrentHashMap.newKeySet();
+    /** 触发线程池：ringThread 只负责从时间轮出队，实际触发（HTTP 调用、DB 更新）在线程池执行，
+     *  避免某台执行器挂起时把时间轮整个卡死 */
+    private final ExecutorService triggerPool = Executors.newFixedThreadPool(
+            Math.max(4, Runtime.getRuntime().availableProcessors() * 2), r -> {
+                Thread t = new Thread(r, "ww-job-trigger");
+                t.setDaemon(true);
+                return t;
+            });
 
     private Thread scheduleThread;
     private Thread ringThread;
@@ -112,7 +122,7 @@ public class ScheduleHelper {
         while (running) {
             try {
                 for (Runnable task : timeWheel.advance()) {
-                    task.run();
+                    triggerPool.execute(task);
                 }
             } catch (Exception e) {
                 // 忽略单次异常
@@ -128,6 +138,7 @@ public class ScheduleHelper {
     @PreDestroy
     public void stop() {
         running = false;
+        triggerPool.shutdownNow();
         scheduleThread.interrupt();
         ringThread.interrupt();
     }

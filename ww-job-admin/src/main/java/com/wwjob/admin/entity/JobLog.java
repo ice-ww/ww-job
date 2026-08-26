@@ -12,6 +12,12 @@ import java.time.LocalDateTime;
  */
 @TableName("job_log")
 public class JobLog {
+    /** 日志状态：0 运行中，1 成功，2 失败，3 未知（超时/被阻塞，结果不确定） */
+    public static final int STATUS_RUNNING = 0;
+    public static final int STATUS_SUCCESS = 1;
+    public static final int STATUS_FAIL = 2;
+    public static final int STATUS_UNKNOWN = 3;
+
     @TableId(type = IdType.AUTO)
     private Long id;
     private Long jobId;

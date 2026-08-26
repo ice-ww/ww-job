@@ -115,10 +115,10 @@ mvn -pl ww-job-executor-samples -am spring-boot:run
 # 查看执行器分组（应能看到 sample-executor）
 curl http://localhost:8080/jobgroup/list
 
-# 创建任务：cron 每 5 秒触发，handler 指向 demoHandler
+# 创建任务：cron 每 5 秒触发，handler 指向 demoHandler，blockStrategy=SINGLE（重叠丢弃）
 curl -X POST http://localhost:8080/job \
   -H "Content-Type: application/json" \
-  -d '{"jobGroupId":1,"handlerName":"demoHandler","cron":"0/5 * * * * ?","routeStrategy":"round","retryCount":0,"triggerStatus":1}'
+  -d '{"jobGroupId":1,"handlerName":"demoHandler","cron":"0/5 * * * * ?","routeStrategy":"round","retryCount":0,"blockStrategy":"SINGLE","triggerStatus":1}'
 
 # 查看执行日志（应每 5 秒新增一条成功记录）
 curl "http://localhost:8080/joblog/page?size=5"
@@ -170,6 +170,16 @@ ww-job/
 └── docker-compose.yml      # MySQL + Redis
 ```
 
+## 执行语义与注意事项
+
+当前采用**同步请求-响应**分发模型，几个关键语义务必了解，业务方才能正确使用：
+
+1. **At-least-once（至少一次）**：调度与分发不保证"恰好一次"。`handler` 必须幂等——用 `logId`（`JobContext.getLogId()`）作为去重键，重复执行时对同一 `logId` 只做一次副作用（扣款 / 发短信等）。
+2. **超时 ≠ 失败（status=3 未知）**：admin 等待执行器返回最多 10s。超时后结果不确定（执行器可能仍在执行），日志记为 **status=3（未知）**，并且**不会自动重试**——重试会让同一任务并行跑多遍，对非幂等 handler 是事故。看到 status=3 请结合执行器日志确认实际结果，勿重复手动触发。
+3. **重试只发生在"明确失败"**：只有连接被拒绝（handler 未启动）或执行器明确返回失败码才重试。`retryCount` 次重试可能换执行器（failover / 轮询）。
+4. **阻塞策略 `blockStrategy=SINGLE`（默认 `serial`，不互斥）**：同一任务同一时刻只允许一个实例在跑。cron 间隔小于执行耗时、上一次还没结束时，本次触发直接丢弃并记一条 status=3（被阻塞）日志。⚠️ **局限**：互斥是 admin 进程内的，且**执行超过 10s 的任务在超时释放后无法被完全挡住重叠**（handler 仍在跑，下一次已放行）——这是同步模型的固有边界，Phase 2 将改为异步回调模型根治。
+5. **手动触发与 cron 触发共用同一互斥判断**（`SINGLE` 下两者互斥）；但不同任务之间不互斥，handler 需自行保证线程安全。
+
 ## Phase 1 范围与后续规划
 
 - [x] 注册中心（注册 / 心跳 / 下线清理）
@@ -177,7 +187,8 @@ ww-job/
 - [x] HTTP 任务分发与执行
 - [x] 失败重试 / 手动触发 / 任务与分组管理
 - [x] 执行日志
-- [ ] 分片广播 / 阻塞策略 / 超时控制
+- [x] 阻塞策略（SINGLE 互斥）/ 超时控制（超时不重试 + status=3 未知态）
+- [ ] 分片广播
 - [ ] 调度中心集群（分布式锁）
 - [ ] 前端控制台
 
