@@ -10,6 +10,9 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Component;
 
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
  * @author 王威
  * @version 1.0
@@ -23,6 +26,8 @@ public class ScheduleHelper {
     private final JobInfoMapper jobInfoMapper;
     private final JobTriggerService triggerService;
     private final TimeWheel timeWheel = new TimeWheel(TICK_MS, WHEEL_SIZE);
+    /** 已放入时间轮等待触发的任务 id，防止同一任务被重复入轮 */
+    private final Set<Long> scheduledJobIds = ConcurrentHashMap.newKeySet();
 
     private Thread scheduleThread;
     private Thread ringThread;
@@ -48,18 +53,58 @@ public class ScheduleHelper {
             try {
                 long now = System.currentTimeMillis();
                 long windowEnd = now + PRE_READ_MS;
-                // 预读：trigger_next_time 在 [now, now+5s] 内的启用任务
+                // 预读：已到期或即将到期（<= now+5s）的启用任务。
+                // 不加下界：trigger_next_time 落后的任务也会被捞起，在 scheduleIfNeeded 里追赶，避免永久失活
                 var list = jobInfoMapper.selectList(new QueryWrapper<JobInfo>()
                         .eq("trigger_status", 1)
-                        .ge("trigger_next_time", now)
                         .le("trigger_next_time", windowEnd));
                 for (JobInfo job : list) {
-                    refreshNextTime(job, now);
+                    scheduleIfNeeded(job, now);
                 }
             } catch (Exception e) {
                 // 单次扫描异常不退出循环
             }
             sleep(TICK_MS);
+        }
+    }
+
+    /** 同一任务已在时间轮中则跳过，避免重复触发；否则入轮。落后任务先推进到未来再入轮 */
+    private void scheduleIfNeeded(JobInfo job, long now) {
+        if (!scheduledJobIds.add(job.getId())) {
+            return;
+        }
+        long next = job.getTriggerNextTime();
+        if (next < now) {
+            // 任务落后（如 admin 重启、上次推进失败）：直接跳到下一个未来触发点。
+            // 这样既不会立即补触发，也不会因 query 只查未来而永久失活
+            next = CronUtil.nextTime(job.getCron(), now);
+            job.setTriggerNextTime(next);
+            jobInfoMapper.updateById(job);
+        }
+        long delay = Math.max(0, next - now);
+        timeWheel.addTask(delay, () -> {
+            try {
+                triggerService.trigger(job.getId(), "cron");
+            } finally {
+                // 触发后推进下次触发时间，保证任务不会因 trigger_next_time 过期而失活
+                advanceNextTime(job.getId(), job.getCron());
+                scheduledJobIds.remove(job.getId());
+            }
+        });
+    }
+
+    /** 触发完成后，把下次触发时间算好写回 DB */
+    private void advanceNextTime(long jobId, String cron) {
+        try {
+            JobInfo job = jobInfoMapper.selectById(jobId);
+            if (job == null || job.getTriggerStatus() == null || job.getTriggerStatus() != 1) {
+                return;  // 任务被停用则不再推进，让它自然失活
+            }
+            long next = CronUtil.nextTime(cron, System.currentTimeMillis());
+            job.setTriggerNextTime(next);
+            jobInfoMapper.updateById(job);
+        } catch (Exception e) {
+            // 推进失败，下次扫描会重新调度
         }
     }
 
@@ -74,14 +119,6 @@ public class ScheduleHelper {
             }
             sleep(TICK_MS);
         }
-    }
-
-    private void refreshNextTime(JobInfo job, long now) {
-        long next = CronUtil.nextTime(job.getCron(), now);   // 用 cron 算下次时间
-        job.setTriggerNextTime(next);
-        jobInfoMapper.updateById(job);                        // 更新回 DB
-        long delay = next - System.currentTimeMillis();       // 距下次还有多久
-        timeWheel.addTask(Math.max(0, delay), () -> triggerService.trigger(job.getId(), "cron"));  // 放时间轮
     }
 
     private void sleep(long ms) {
