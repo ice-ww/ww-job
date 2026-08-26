@@ -43,12 +43,12 @@ public class JobTriggerServiceImpl implements JobTriggerService {
         for (int attempt = 0; attempt <= retryCount; attempt++) {
             String address = routerService.route(job.getJobGroupId(), job.getRouteStrategy(), jobId);
             if (address == null) {
-                log = saveLog(job, "无可用执行器", null, 2);
+                log = saveLog(job, triggerType, "无可用执行器", null, 2);
                 return;
             }
             // 首次调用建日志；重试复用同一条日志并刷新执行地址（可能换了台执行器）
             if (log == null) {
-                log = saveLog(job, null, address, 0);
+                log = saveLog(job, triggerType, null, address, 0);
             } else {
                 log.setExecutorAddress(address);
             }
@@ -81,12 +81,13 @@ public class JobTriggerServiceImpl implements JobTriggerService {
         jobInfoMapper.updateById(job);
     }
 
-    private JobLog saveLog(JobInfo job, String failMsg, String address, int status) {
+    private JobLog saveLog(JobInfo job, String triggerType, String failMsg, String address, int status) {
         JobLog log = new JobLog();
         log.setJobId(job.getId());
         log.setJobGroupId(job.getJobGroupId());
         log.setExecutorAddress(address);
         log.setHandlerName(job.getHandlerName());
+        log.setTriggerType(triggerType);
         log.setTriggerTime(LocalDateTime.now());
         log.setStatus(status);
         log.setHandleMsg(failMsg);
