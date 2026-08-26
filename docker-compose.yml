@@ -1,0 +1,12 @@
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: ww_job
+    ports:
+      - "3306:3306"
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
