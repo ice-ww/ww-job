@@ -11,3 +11,5 @@ wwjob:
     admin-addresses: http://localhost:8080
     port: 8081
     heartbeat-interval-seconds: 30
+    address: 127.0.0.1
+

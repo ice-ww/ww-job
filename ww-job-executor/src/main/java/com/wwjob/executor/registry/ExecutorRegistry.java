@@ -30,7 +30,11 @@ public class ExecutorRegistry {
 
     private void doRegister() {
         try {
-            String value = InetAddress.getLocalHost().getHostAddress() + ":" + props.getPort();
+            String ip = props.getAddress();
+            if (ip == null || ip.isEmpty()) {
+                ip = InetAddress.getLocalHost().getHostAddress();
+            }
+            String value = ip + ":" + props.getPort();
             RegistryParam param = new RegistryParam();
             param.setRegistryKey(props.getAppName());
             param.setRegistryValue(value);
@@ -41,4 +45,5 @@ public class ExecutorRegistry {
             System.err.println("register failed: " + e.getMessage());
         }
     }
+
 }

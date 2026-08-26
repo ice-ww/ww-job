@@ -13,6 +13,8 @@ public class ExecutorProperties {
     private String appName;
     /** 执行器自身端口，用于拼 registryValue = IP:port */
     private int port = 8081;
+    /** 执行器对外地址（可选）。不配则自动探测本机 IP；建议显式配置以保证稳定 */
+    private String address;
     /** 心跳间隔（秒） */
     private int heartbeatIntervalSeconds = 30;
 
@@ -24,4 +26,7 @@ public class ExecutorProperties {
     public void setPort(int port) { this.port = port; }
     public int getHeartbeatIntervalSeconds() { return heartbeatIntervalSeconds; }
     public void setHeartbeatIntervalSeconds(int heartbeatIntervalSeconds) { this.heartbeatIntervalSeconds = heartbeatIntervalSeconds; }
+    public String getAddress() { return address; }
+    public void setAddress(String address) { this.address = address; }
+
 }
