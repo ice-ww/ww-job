@@ -33,29 +33,47 @@ public class JobTriggerServiceImpl implements JobTriggerService {
     public void trigger(long jobId, String triggerType) {
         JobInfo job = jobInfoMapper.selectById(jobId);
         if (job == null) return;
-        String address = routerService.route(job.getJobGroupId(), job.getRouteStrategy(), jobId);
-        if (address == null) {
-            saveLog(job, "无可用执行器", null, 2);
-            return;
-        }
-        JobLog log = saveLog(job, null, address, 0);
-        TriggerParam param = new TriggerParam();
-        param.setJobId(jobId);
-        param.setHandler(job.getHandlerName());
-        param.setExecutorParam(job.getExecutorParam());
-        param.setLogId(log.getId());
-        try {
-            ReturnT<?> result = restTemplate.postForObject(
-                    "http://" + address + "/run", param, ReturnT.class);
-            if (result != null && result.getCode() == ReturnT.SUCCESS_CODE) {
-                log.setStatus(1); log.setHandleCode(ReturnT.SUCCESS_CODE);
-            } else {
-                log.setStatus(2); log.setHandleCode(ReturnT.FAIL_CODE);
-                log.setHandleMsg(result == null ? "无返回" : result.getMsg());
+        // 判空兜底
+        int retryCount = job.getRetryCount() == null ? 0 : job.getRetryCount();
+        ReturnT<?> result = null;
+        Exception lastError = null;
+        JobLog log = null;
+
+        // 最多尝试 retryCount+1 次：第 1 次 + retryCount 次重试
+        for (int attempt = 0; attempt <= retryCount; attempt++) {
+            String address = routerService.route(job.getJobGroupId(), job.getRouteStrategy(), jobId);
+            if (address == null) {
+                log = saveLog(job, "无可用执行器", null, 2);
+                return;
             }
-        } catch (Exception e) {
+            // 首次调用建日志；重试复用同一条日志并刷新执行地址（可能换了台执行器）
+            if (log == null) {
+                log = saveLog(job, null, address, 0);
+            } else {
+                log.setExecutorAddress(address);
+            }
+            TriggerParam param = new TriggerParam();
+            param.setJobId(jobId);
+            param.setHandler(job.getHandlerName());
+            param.setExecutorParam(job.getExecutorParam());
+            param.setLogId(log.getId());
+            try {
+                result = restTemplate.postForObject("http://" + address + "/run", param, ReturnT.class);
+                if (result != null && result.getCode() == ReturnT.SUCCESS_CODE) {
+                    break;  // 成功，不再重试
+                }
+            } catch (Exception e) {
+                lastError = e;
+            }
+        }
+
+        // 按最终结果落日志
+        if (result != null && result.getCode() == ReturnT.SUCCESS_CODE) {
+            log.setStatus(1); log.setHandleCode(ReturnT.SUCCESS_CODE);
+        } else {
             log.setStatus(2); log.setHandleCode(ReturnT.FAIL_CODE);
-            log.setHandleMsg(e.getMessage());
+            log.setHandleMsg(lastError != null ? lastError.getMessage()
+                    : (result == null ? "无返回" : result.getMsg()));
         }
         log.setHandleTime(LocalDateTime.now());
         jobLogMapper.updateById(log);
