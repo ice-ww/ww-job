@@ -1,5 +1,6 @@
 package com.wwjob.admin.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.wwjob.admin.entity.JobInfo;
 import com.wwjob.admin.entity.JobLog;
 import com.wwjob.admin.mapper.JobInfoMapper;
@@ -8,12 +9,12 @@ import com.wwjob.core.model.ReturnT;
 import com.wwjob.core.model.TriggerParam;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestTemplate;
 
 import java.net.SocketTimeoutException;
 import java.time.LocalDateTime;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * @author 王威
@@ -25,19 +26,20 @@ public class JobTriggerServiceImpl implements JobTriggerService {
     private final JobLogMapper jobLogMapper;
     private final ExecutorRouterService routerService;
     private final RestTemplate restTemplate;
-    /** block_strategy=SINGLE 时的执行中任务集合：同一任务同一时刻只允许一个实例在跑 */
-    private final Set<Long> runningJobIds = ConcurrentHashMap.newKeySet();
+    private final TransactionTemplate transactionTemplate;
 
     public JobTriggerServiceImpl(JobInfoMapper jobInfoMapper, JobLogMapper jobLogMapper,
-                                 ExecutorRouterService routerService) {
+                                 ExecutorRouterService routerService,
+                                 PlatformTransactionManager transactionManager) {
         this.jobInfoMapper = jobInfoMapper;
         this.jobLogMapper = jobLogMapper;
         this.routerService = routerService;
-        // 连接 3s / 读 10s 超时：执行器挂起时不会永久阻塞触发线程（默认 RestTemplate 超时是无限）
+        // /run 只等 ack（瞬时）：connect 3s / read 5s
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(3000);
-        factory.setReadTimeout(10000);
+        factory.setReadTimeout(5000);
         this.restTemplate = new RestTemplate(factory);
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     @Override
@@ -46,79 +48,76 @@ public class JobTriggerServiceImpl implements JobTriggerService {
         if (job == null) return;
 
         boolean single = "SINGLE".equalsIgnoreCase(job.getBlockStrategy());
-        if (single) {
-            if (!runningJobIds.add(jobId)) {
-                // 上一次执行尚未结束：丢弃本次触发（记"被阻塞"日志，不制造重复执行）
-                saveLog(job, triggerType, "任务上一次执行尚未结束，本次触发被阻塞丢弃", null, JobLog.STATUS_UNKNOWN);
-                return;
-            }
-        }
-        try {
-            dispatchWithRetry(job, triggerType);
-        } finally {
-            if (single) runningJobIds.remove(jobId);
-        }
+        // 决策：行锁 + DB status=0 计数判断互斥。锁内不发 HTTP。
+        JobLog log = transactionTemplate.execute(status -> decide(job, single, triggerType));
+        if (log == null) return;  // 被阻塞，已插 status=3 日志
+
+        // 锁外投递：retryCount 只作用于投递阶段
+        dispatch(log, job);
     }
 
-    /** 路由 + 分发 + 最多 retryCount 次重试，最后按"成功 / 明确失败 / 超时未知"三态落日志 */
-    private void dispatchWithRetry(JobInfo job, String triggerType) {
-        long jobId = job.getId();
-        int retryCount = job.getRetryCount() == null ? 0 : job.getRetryCount();
-        ReturnT<?> result = null;
-        Exception lastError = null;
-        JobLog log = null;
+    /** 事务决策。返回 null 表示被阻塞；否则返回新插入的 status=0 日志（= 互斥位） */
+    private JobLog decide(JobInfo job, boolean single, String triggerType) {
+        jobInfoMapper.selectByIdForUpdate(job.getId());  // 行锁串行化同一任务
+        long running = jobLogMapper.selectCount(new QueryWrapper<JobLog>()
+                .eq("job_id", job.getId())
+                .eq("status", JobLog.STATUS_RUNNING));
+        if (single && running > 0) {
+            saveLog(job, triggerType, "任务上一次执行尚未结束，本次触发被阻塞丢弃", null, JobLog.STATUS_UNKNOWN);
+            return null;
+        }
+        return saveLog(job, triggerType, null, null, JobLog.STATUS_RUNNING);
+    }
 
-        // 最多尝试 retryCount+1 次：第 1 次 + retryCount 次重试
+    /** 投递 /run 等 ack。ack 成功即完成投递，执行结果等执行器回调 */
+    private void dispatch(JobLog log, JobInfo job) {
+        int retryCount = job.getRetryCount() == null ? 0 : job.getRetryCount();
+        ReturnT<?> lastResult = null;
+        Exception lastError = null;
         for (int attempt = 0; attempt <= retryCount; attempt++) {
-            String address = routerService.route(job.getJobGroupId(), job.getRouteStrategy(), jobId);
+            String address = routerService.route(job.getJobGroupId(), job.getRouteStrategy(), job.getId());
             if (address == null) {
-                log = saveLog(job, triggerType, "无可用执行器", null, JobLog.STATUS_FAIL);
+                markFailed(log, "无可用执行器");
                 return;
             }
-            // 首次调用建日志；重试复用同一条日志并刷新执行地址（可能换了台执行器）
-            if (log == null) {
-                log = saveLog(job, triggerType, null, address, JobLog.STATUS_RUNNING);
-            } else {
-                log.setExecutorAddress(address);
-            }
+            log.setExecutorAddress(address);
             TriggerParam param = new TriggerParam();
-            param.setJobId(jobId);
+            param.setJobId(job.getId());
             param.setHandler(job.getHandlerName());
             param.setExecutorParam(job.getExecutorParam());
             param.setLogId(log.getId());
             try {
-                result = restTemplate.postForObject("http://" + address + "/run", param, ReturnT.class);
-                if (result != null && result.getCode() == ReturnT.SUCCESS_CODE) {
-                    break;  // 成功，不再重试
+                lastResult = restTemplate.postForObject("http://" + address + "/run", param, ReturnT.class);
+                if (lastResult != null && lastResult.getCode() == ReturnT.SUCCESS_CODE) {
+                    // ack 收到：投递成功，记录执行地址，结果等回调
+                    log.setHandleMsg("已投递，等待执行器回调");
+                    jobLogMapper.updateById(log);
+                    job.setTriggerLastTime(System.currentTimeMillis());
+                    jobInfoMapper.updateById(job);
+                    return;
                 }
+                lastError = null;  // 明确失败 ack（执行器繁忙等）→ 可重试投递
             } catch (Exception e) {
                 lastError = e;
-                // 超时 = 结果未知，执行器可能仍在执行：重试必然造成重复执行（扣款/发短信等非幂等事故），直接放弃。
-                // 只有连接被拒绝（handler 没跑）或明确失败响应才允许重试
                 if (isTimeout(e)) {
-                    break;
+                    // ack 读超时：执行器可能已受理但回执丢失，重试=重复执行 → 放弃，等回调/巡检兜底
+                    log.setHandleMsg("已投递但未收到受理回执，结果等待执行器回调");
+                    jobLogMapper.updateById(log);
+                    return;
                 }
+                // 连接被拒等 → 可重试投递
             }
         }
+        markFailed(log, lastError != null ? lastError.getMessage()
+                : (lastResult == null ? "投递失败" : lastResult.getMsg()));
+    }
 
-        // 三态落日志：成功 / 明确失败 / 超时未知，不再把"结果未知"误判成"失败"
-        if (result != null && result.getCode() == ReturnT.SUCCESS_CODE) {
-            log.setStatus(JobLog.STATUS_SUCCESS);
-            log.setHandleCode(ReturnT.SUCCESS_CODE);
-        } else if (isTimeout(lastError)) {
-            log.setStatus(JobLog.STATUS_UNKNOWN);
-            log.setHandleCode(ReturnT.FAIL_CODE);
-            log.setHandleMsg("执行超时，结果未知：执行器可能仍在执行，请以执行器日志为准，勿重复触发");
-        } else {
-            log.setStatus(JobLog.STATUS_FAIL);
-            log.setHandleCode(ReturnT.FAIL_CODE);
-            log.setHandleMsg(lastError != null ? lastError.getMessage()
-                    : (result == null ? "无返回" : result.getMsg()));
-        }
+    private void markFailed(JobLog log, String msg) {
+        log.setStatus(JobLog.STATUS_FAIL);
+        log.setHandleCode(ReturnT.FAIL_CODE);
+        log.setHandleMsg(msg);
         log.setHandleTime(LocalDateTime.now());
         jobLogMapper.updateById(log);
-        job.setTriggerLastTime(System.currentTimeMillis());
-        jobInfoMapper.updateById(job);
     }
 
     /** RestTemplate 把 SocketTimeoutException 包在 ResourceAccessException 里，沿 cause 链查找 */
