@@ -120,12 +120,19 @@ public class JobTriggerServiceImpl implements JobTriggerService {
         jobLogMapper.updateById(log);
     }
 
-    /** RestTemplate 把 SocketTimeoutException 包在 ResourceAccessException 里，沿 cause 链查找 */
+    /** RestTemplate 把 SocketTimeoutException 包在 ResourceAccessException 里，沿 cause 链查找。
+     *  注意：HttpURLConnection 下连接超时与读超时都是 SocketTimeoutException，仅靠消息区分——
+     *  "Connect timed out" = 连接未建立 = 请求未投递 = 重试安全；其余（"Read timed out"）= 已受理应答超时 = 不重试。 */
     private boolean isTimeout(Exception e) {
         if (e == null) return false;
         Throwable c = e;
         while (c != null) {
-            if (c instanceof SocketTimeoutException) return true;
+            if (c instanceof SocketTimeoutException) {
+                String msg = c.getMessage();
+                // 连接超时（"Connect timed out"）：请求从未投递，重试安全；读超时等其余情况视为结果未知，不重试防重复执行
+                if (msg != null && msg.toLowerCase().contains("connect")) return false;
+                return true;
+            }
             c = c.getCause();
         }
         return false;
