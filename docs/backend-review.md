@@ -46,7 +46,7 @@
 
 | # | 项 | 说明 |
 | --- | --- | --- |
-| P2-1 | `block_strategy`/`timeout`/`alarm_config` 字段建了未用 | schema 与实体暴露了未实现功能。**2026-08-26 思路一后 `block_strategy=SINGLE` 已实现**（见下）；`timeout`（按任务配置超时秒数）与 `alarm_config` 仍仅固定 10s 读超时、无告警 |
+| P2-1 | `block_strategy`/`timeout`/`alarm_config` 字段建了未用 | schema 与实体暴露了未实现功能。**2026-08-26 思路一后 `block_strategy=SINGLE` 已实现**（见下）；**Phase 2 异步回调后 `timeout` 已被 `JobLogTimeoutScanner` 用作执行超时阈值（0=默认 60s）**，巡检超时标 status=3；`alarm_config` 仍无告警 |
 | P2-2 | 控制器零参数校验 | 非法 cron / 重复 appName / 不存在的 jobGroupId / PUT 部分更新（cron 为 null）→ 全部 500 裸异常；`PUT /job` 无条件重置 triggerNextTime |
 | P2-3 | 手动地址分组未实现 | `address_type=1` / `address_list` 从未被读取，route 只查 registry 表 |
 | P2-4 | 执行器无优雅下线 | 只能等 90s 超时被 RegistryCleaner 清掉，无注销接口；重启有 90s 僵尸节点窗口 |
