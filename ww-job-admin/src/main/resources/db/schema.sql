@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS job_info (
     route_strategy VARCHAR(32) DEFAULT 'round_robin',
     block_strategy VARCHAR(32) DEFAULT 'serial',
     retry_count INT DEFAULT 0,
-    timeout INT DEFAULT 0 COMMENT '超时秒数，0不限制',
+    timeout INT DEFAULT 0 COMMENT '执行超时秒数，0 默认 60s',
     alarm_config VARCHAR(512) COMMENT '报警配置',
     trigger_status TINYINT DEFAULT 1 COMMENT '1启用 0暂停',
     trigger_next_time BIGINT DEFAULT 0 COMMENT '下次触发毫秒时间戳',

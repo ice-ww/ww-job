@@ -45,6 +45,11 @@ public class JobRunner implements Runnable {
             Object data = result.getData();
             handleMsg = data != null ? String.valueOf(data) : null;
         }
+        if (handleMsg == null) {
+            // 裸 success()/fail()：msg 与 data 双 null → 按 code 给默认文案，避免回调 updateById 忽略 null、
+            // 终态残留 ack 占位符「已投递，等待执行器回调」造成成功任务文案误导
+            handleMsg = result.getCode() == ReturnT.SUCCESS_CODE ? "执行成功" : "执行失败";
+        }
         reporter.report(new CallbackParam(param.getLogId(),
                 result.getCode(), handleMsg, System.currentTimeMillis()));
     }
