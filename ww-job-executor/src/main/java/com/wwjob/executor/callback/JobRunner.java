@@ -39,7 +39,13 @@ public class JobRunner implements Runnable {
         } catch (Exception e) {
             result = ReturnT.fail(e.getMessage());
         }
+        String handleMsg = result.getMsg();
+        if (handleMsg == null) {
+            // ReturnT.success(data) 把结果消息放进 data；data 也 null（裸 success()）则保持 null，避免落库 "null" 字符串
+            Object data = result.getData();
+            handleMsg = data != null ? String.valueOf(data) : null;
+        }
         reporter.report(new CallbackParam(param.getLogId(),
-                result.getCode(), result.getMsg(), System.currentTimeMillis()));
+                result.getCode(), handleMsg, System.currentTimeMillis()));
     }
 }
