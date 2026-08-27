@@ -1,6 +1,7 @@
 package com.wwjob.admin.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.wwjob.admin.entity.JobInfo;
 import com.wwjob.admin.entity.JobLog;
 import com.wwjob.admin.mapper.JobInfoMapper;
@@ -89,9 +90,13 @@ public class JobTriggerServiceImpl implements JobTriggerService {
             try {
                 lastResult = restTemplate.postForObject("http://" + address + "/run", param, ReturnT.class);
                 if (lastResult != null && lastResult.getCode() == ReturnT.SUCCESS_CODE) {
-                    // ack 收到：投递成功，记录执行地址，结果等回调
-                    log.setHandleMsg("已投递，等待执行器回调");
-                    jobLogMapper.updateById(log);
+                    // ack 收到：投递成功，记录执行地址，结果等回调。
+                    // 定点更新 handle_msg + executor_address，不写 status——瞬时 handler 的回调可能已提交 status=1，
+                    // 整行 updateById 会把 stale status=0 覆盖回去导致误标 status=3
+                    jobLogMapper.update(null, new UpdateWrapper<JobLog>()
+                            .eq("id", log.getId())
+                            .set("handle_msg", "已投递，等待执行器回调")
+                            .set("executor_address", log.getExecutorAddress()));
                     job.setTriggerLastTime(System.currentTimeMillis());
                     jobInfoMapper.updateById(job);
                     return;
@@ -100,9 +105,13 @@ public class JobTriggerServiceImpl implements JobTriggerService {
             } catch (Exception e) {
                 lastError = e;
                 if (isTimeout(e)) {
-                    // ack 读超时：执行器可能已受理但回执丢失，重试=重复执行 → 放弃，等回调/巡检兜底
+                    // ack 读超时：执行器可能已受理但回执丢失，重试=重复执行 → 放弃，等回调/巡检兜底。
+                    // 同 ack 成功路径：定点更新，避免 stale status=0 覆盖瞬时回调已提交的 status=1
                     log.setHandleMsg("已投递但未收到受理回执，结果等待执行器回调");
-                    jobLogMapper.updateById(log);
+                    jobLogMapper.update(null, new UpdateWrapper<JobLog>()
+                            .eq("id", log.getId())
+                            .set("handle_msg", log.getHandleMsg())
+                            .set("executor_address", log.getExecutorAddress()));
                     return;
                 }
                 // 连接被拒等 → 可重试投递
