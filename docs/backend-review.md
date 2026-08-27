@@ -72,10 +72,10 @@
 2. **status=3 未知态**：`JobLog` 新增常量 `STATUS_UNKNOWN=3`，超时/被阻塞落该状态，handleMsg 提示"结果未知，勿重复触发"，不再误判为失败。
 3. **`block_strategy=SINGLE` 互斥**：`runningJobIds`（`ConcurrentHashMap.newKeySet()`）判重，上一次未结束则丢弃本次触发并记 status=3 被阻塞日志，`try/finally` 释放；默认 `serial` 不互斥。
 
-### 遗留边界（文档已注明，Phase 2 异步回调根治）
-- 互斥是 admin 进程内的，多 admin 实例无分布式锁。
-- **执行 > 10s 的任务**：超时释放互斥位后，下一次触发仍会放行 → 重叠无法完全挡住。
-- 幂等要求未自动满足：仍需业务 handler 以 `logId` 去重。
+### 遗留边界（已由 Phase 2 异步回调根治，2026-08-27）
+- 互斥是 admin 进程内的，多 admin 实例无分布式锁。→ **已根治**：互斥位从内存 `runningJobIds` Set → DB `status=0` 计数，admin 重启不丢、天然支持多 admin 实例。
+- **执行 > 10s 的任务**：超时释放互斥位后，下一次触发仍会放行 → 重叠无法完全挡住。→ **已根治**：同步阻塞等待 → 「投递 ack + 执行器回调」，`timeout` 成为执行超时阈值（0=默认 60s）；互斥位到回调才释放，慢任务不再被 admin 读超时打断。
+- 幂等要求未自动满足：仍需业务 handler 以 `logId` 去重。（Phase 2 未改动，仍适用）
 
 ---
 
