@@ -52,6 +52,17 @@ public class JobLog {
         this.createTime = createTime;
     }
 
+    public JobLog(JobInfo job, String triggerType, String handleMsg, Integer handleCode, Integer status, Integer shardIndex) {
+        this.jobId = job.getId();
+        this.jobGroupId = job.getJobGroupId();
+        this.handlerName = job.getHandlerName();
+        this.triggerType = triggerType;
+        this.handleMsg = handleMsg;
+        this.handleCode = handleCode;
+        this.triggerTime = LocalDateTime.now();
+        this.status = status;
+        this.shardIndex = shardIndex;
+    }
 
 
     /**

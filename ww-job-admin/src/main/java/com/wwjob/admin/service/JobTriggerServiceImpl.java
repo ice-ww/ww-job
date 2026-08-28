@@ -12,6 +12,7 @@ import org.springframework.web.client.RestTemplate;
 
 import java.net.SocketTimeoutException;
 import java.time.LocalDateTime;
+import java.util.List;
 
 
 /**
@@ -44,9 +45,57 @@ public class JobTriggerServiceImpl implements JobTriggerService {
     public void trigger(long jobId, String triggerType) {
         JobInfo job = jobInfoMapper.selectById(jobId);
         if (job == null) return;
+        if ("sharding".equalsIgnoreCase(job.getRouteStrategy())) {
+            broadcast(job, triggerType);
+            return;
+        }
         Long logId = jobDecisionService.decide(jobId, triggerType);
         if (logId == null) return;
         dispatch(logId, job, triggerType);
+    }
+
+    private void broadcast(JobInfo job, String triggerType) {
+        List<String> addresses = routerService.onlineAddresses(job.getJobGroupId());
+        if (addresses.isEmpty()) {
+            JobLog log = new JobLog(job, triggerType, "无可用执行器", ReturnT.FAIL_CODE, JobLog.STATUS_FAIL, 0);
+            jobLogMapper.insert(log);
+            return;
+        }
+        int total = addresses.size();
+        for (int i = 0; i < total; i++) {
+            // handle_code = null --> 任务才受理，还未执行
+            JobLog log = new JobLog(job, triggerType, "已受理，等待执行结果", null, JobLog.STATUS_RUNNING, i);
+            jobLogMapper.insert(log);
+            try {
+                dispatchOne(log, job, addresses.get(i), total);
+            } catch (Exception e) {
+                log.setStatus(JobLog.STATUS_FAIL);
+                log.setHandleCode(ReturnT.FAIL_CODE);
+                log.setHandleMsg("投递失败：" + e.getMessage());
+                log.setHandleTime(LocalDateTime.now());
+                jobLogMapper.updateById(log);
+            }
+        }
+    }
+
+    private void dispatchOne(JobLog log, JobInfo job, String address, int shardTotal) {
+        log.setExecutorAddress(address);
+        TriggerParam param = new TriggerParam();
+        param.setJobId(job.getId());
+        param.setHandler(job.getHandlerName());
+        param.setExecutorParam(job.getExecutorParam());
+        param.setLogId(log.getId());
+        param.setShardIndex(log.getShardIndex());
+        param.setShardTotal(shardTotal);
+        ReturnT<?> result = restTemplate.postForObject("http://" + address + "/run", param, ReturnT.class);
+        if (result != null && result.getCode() == ReturnT.SUCCESS_CODE) {
+            // ack 成功 = 执行器已受理，任务还在跑，日志保持 status=0 等回调
+            job.setTriggerLastTime(System.currentTimeMillis());
+            jobInfoMapper.updateById(job);
+            return;
+        }
+        throw new RuntimeException(result != null ? result.getMsg() : "无返回");
+
     }
 
 
@@ -56,7 +105,6 @@ public class JobTriggerServiceImpl implements JobTriggerService {
         JobLog log = jobLogMapper.selectById(logId);
         if (log == null) return;
         int retryCount = job.getRetryCount() == null ? 0 : job.getRetryCount();
-        ReturnT<?> result = null;
         Exception lastError = null;
 
         // 最多尝试 retryCount+1 次：第 1 次 + retryCount 次重试
@@ -68,20 +116,9 @@ public class JobTriggerServiceImpl implements JobTriggerService {
                 jobLogMapper.updateById(log);
                 return;
             }
-            log.setExecutorAddress(address);
-            TriggerParam param = new TriggerParam();
-            param.setJobId(jobId);
-            param.setHandler(job.getHandlerName());
-            param.setExecutorParam(job.getExecutorParam());
-            param.setLogId(logId);
             try {
-                result = restTemplate.postForObject("http://" + address + "/run", param, ReturnT.class);
-                if (result != null && result.getCode() == ReturnT.SUCCESS_CODE) {
-                    // ack 成功 = 执行器已受理，任务还在跑，日志保持 status=0 等回调
-                    job.setTriggerLastTime(System.currentTimeMillis());
-                    jobInfoMapper.updateById(job);
+                dispatchOne(log, job, address, 0); //单台传 shardTotal=0
                     return;
-                }
             } catch (Exception e) {
                 lastError = e;
                 // 超时 = 结果未知，执行器可能仍在执行：重试必然造成重复执行（扣款/发短信等非幂等事故），直接放弃。
@@ -101,8 +138,7 @@ public class JobTriggerServiceImpl implements JobTriggerService {
         } else {
             log.setStatus(JobLog.STATUS_FAIL);
             log.setHandleCode(ReturnT.FAIL_CODE);
-            log.setHandleMsg(lastError != null ? lastError.getMessage()
-                    : (result == null ? "无返回" : result.getMsg()));
+            log.setHandleMsg(lastError != null ? lastError.getMessage() : "无返回");
         }
         log.setHandleTime(LocalDateTime.now());
         jobLogMapper.updateById(log);
