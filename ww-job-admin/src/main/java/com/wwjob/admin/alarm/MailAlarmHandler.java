@@ -3,7 +3,7 @@ package com.wwjob.admin.alarm;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Component;
-
+import org.springframework.beans.factory.annotation.Value;
 
 /**
  * @author 王威
@@ -13,6 +13,10 @@ import org.springframework.stereotype.Component;
 @Component
 public class MailAlarmHandler implements AlarmHandler {
     private final JavaMailSender mailSender;
+
+    @Value("${spring.mail.username}")
+    private String from;
+
     public MailAlarmHandler(JavaMailSender mailSender) {
         this.mailSender = mailSender;
     }
@@ -28,6 +32,7 @@ public class MailAlarmHandler implements AlarmHandler {
             }
             SimpleMailMessage msg = new SimpleMailMessage();
             msg.setTo(e);
+            msg.setFrom(from);
             msg.setSubject(title);
             msg.setText(content);
             mailSender.send(msg);

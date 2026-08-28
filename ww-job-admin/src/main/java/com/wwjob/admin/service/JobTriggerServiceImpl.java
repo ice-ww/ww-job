@@ -79,7 +79,8 @@ public class JobTriggerServiceImpl implements JobTriggerService {
     }
 
     private void dispatchOne(JobLog log, JobInfo job, String address, int shardTotal) {
-        log.setExecutorAddress(address);
+        log.setExecutorAddress(address); //这里只改了内存对象，没有改数据库
+        jobLogMapper.updateById(log);  // 写回数据库，否则地址白设(永远是null)
         TriggerParam param = new TriggerParam();
         param.setJobId(job.getId());
         param.setHandler(job.getHandlerName());
