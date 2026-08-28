@@ -12,8 +12,7 @@ import org.springframework.web.client.RestTemplate;
 
 import java.net.SocketTimeoutException;
 import java.time.LocalDateTime;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+
 
 /**
  * @author 王威
@@ -25,13 +24,14 @@ public class JobTriggerServiceImpl implements JobTriggerService {
     private final JobLogMapper jobLogMapper;
     private final ExecutorRouterService routerService;
     private final RestTemplate restTemplate;
-    /** block_strategy=SINGLE 时的执行中任务集合：同一任务同一时刻只允许一个实例在跑 */
-    private final Set<Long> runningJobIds = ConcurrentHashMap.newKeySet();
+    private final JobDecisionService jobDecisionService;
 
     public JobTriggerServiceImpl(JobInfoMapper jobInfoMapper, JobLogMapper jobLogMapper,
+                                 JobDecisionService jobDecisionService,
                                  ExecutorRouterService routerService) {
         this.jobInfoMapper = jobInfoMapper;
         this.jobLogMapper = jobLogMapper;
+        this.jobDecisionService = jobDecisionService;
         this.routerService = routerService;
         // 连接 3s / 读 10s 超时：执行器挂起时不会永久阻塞触发线程（默认 RestTemplate 超时是无限）
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
@@ -44,52 +44,43 @@ public class JobTriggerServiceImpl implements JobTriggerService {
     public void trigger(long jobId, String triggerType) {
         JobInfo job = jobInfoMapper.selectById(jobId);
         if (job == null) return;
-
-        boolean single = "SINGLE".equalsIgnoreCase(job.getBlockStrategy());
-        if (single) {
-            if (!runningJobIds.add(jobId)) {
-                // 上一次执行尚未结束：丢弃本次触发（记"被阻塞"日志，不制造重复执行）
-                saveLog(job, triggerType, "任务上一次执行尚未结束，本次触发被阻塞丢弃", null, JobLog.STATUS_UNKNOWN);
-                return;
-            }
-        }
-        try {
-            dispatchWithRetry(job, triggerType);
-        } finally {
-            if (single) runningJobIds.remove(jobId);
-        }
+        Long logId = jobDecisionService.decide(jobId, triggerType);
+        if (logId == null) return;
+        dispatch(logId, job, triggerType);
     }
 
+
     /** 路由 + 分发 + 最多 retryCount 次重试，最后按"成功 / 明确失败 / 超时未知"三态落日志 */
-    private void dispatchWithRetry(JobInfo job, String triggerType) {
+    private void dispatch(Long logId, JobInfo job, String triggerType) {
         long jobId = job.getId();
+        JobLog log = jobLogMapper.selectById(logId);
+        if (log == null) return;
         int retryCount = job.getRetryCount() == null ? 0 : job.getRetryCount();
         ReturnT<?> result = null;
         Exception lastError = null;
-        JobLog log = null;
 
         // 最多尝试 retryCount+1 次：第 1 次 + retryCount 次重试
         for (int attempt = 0; attempt <= retryCount; attempt++) {
             String address = routerService.route(job.getJobGroupId(), job.getRouteStrategy(), jobId);
             if (address == null) {
-                log = saveLog(job, triggerType, "无可用执行器", null, JobLog.STATUS_FAIL);
+                log.setStatus(JobLog.STATUS_FAIL);
+                log.setHandleMsg("无可用执行器");
+                jobLogMapper.updateById(log);
                 return;
             }
-            // 首次调用建日志；重试复用同一条日志并刷新执行地址（可能换了台执行器）
-            if (log == null) {
-                log = saveLog(job, triggerType, null, address, JobLog.STATUS_RUNNING);
-            } else {
-                log.setExecutorAddress(address);
-            }
+            log.setExecutorAddress(address);
             TriggerParam param = new TriggerParam();
             param.setJobId(jobId);
             param.setHandler(job.getHandlerName());
             param.setExecutorParam(job.getExecutorParam());
-            param.setLogId(log.getId());
+            param.setLogId(logId);
             try {
                 result = restTemplate.postForObject("http://" + address + "/run", param, ReturnT.class);
                 if (result != null && result.getCode() == ReturnT.SUCCESS_CODE) {
-                    break;  // 成功，不再重试
+                    // ack 成功 = 执行器已受理，任务还在跑，日志保持 status=0 等回调
+                    job.setTriggerLastTime(System.currentTimeMillis());
+                    jobInfoMapper.updateById(job);
+                    return;
                 }
             } catch (Exception e) {
                 lastError = e;
@@ -101,11 +92,9 @@ public class JobTriggerServiceImpl implements JobTriggerService {
             }
         }
 
-        // 三态落日志：成功 / 明确失败 / 超时未知，不再把"结果未知"误判成"失败"
-        if (result != null && result.getCode() == ReturnT.SUCCESS_CODE) {
-            log.setStatus(JobLog.STATUS_SUCCESS);
-            log.setHandleCode(ReturnT.SUCCESS_CODE);
-        } else if (isTimeout(lastError)) {
+        // 三态落日志：成功 / 明确失败 / 超时未知
+        // 成功在上面已处理，只剩失败和超时未知
+        if (isTimeout(lastError)) {
             log.setStatus(JobLog.STATUS_UNKNOWN);
             log.setHandleCode(ReturnT.FAIL_CODE);
             log.setHandleMsg("执行超时，结果未知：执行器可能仍在执行，请以执行器日志为准，勿重复触发");
@@ -132,17 +121,4 @@ public class JobTriggerServiceImpl implements JobTriggerService {
         return false;
     }
 
-    private JobLog saveLog(JobInfo job, String triggerType, String failMsg, String address, int status) {
-        JobLog log = new JobLog();
-        log.setJobId(job.getId());
-        log.setJobGroupId(job.getJobGroupId());
-        log.setExecutorAddress(address);
-        log.setHandlerName(job.getHandlerName());
-        log.setTriggerType(triggerType);
-        log.setTriggerTime(LocalDateTime.now());
-        log.setStatus(status);
-        log.setHandleMsg(failMsg);
-        jobLogMapper.insert(log);
-        return log;
-    }
 }
