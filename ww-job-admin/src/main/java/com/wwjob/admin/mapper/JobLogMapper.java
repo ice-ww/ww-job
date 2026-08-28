@@ -5,6 +5,7 @@ import com.wwjob.admin.entity.JobLog;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -26,4 +27,7 @@ public interface JobLogMapper extends BaseMapper<JobLog> {
               ELSE j.timeout END) SECOND 
           """)
     List<Long> selectTimeoutLogIds();
+
+    @Select("SELECT l.* FROM job_log l WHERE l.status IN (2, 3) AND l.handle_time >= #{from}")
+    List<JobLog> selectRecentlyFailed(@Param("from") LocalDateTime from);
 }

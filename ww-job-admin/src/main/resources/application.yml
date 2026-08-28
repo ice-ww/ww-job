@@ -18,6 +18,14 @@ spring:
     redis:
       host: localhost
       port: 6379
+  mail:
+    host: smtp.qq.com
+    port: 465
+    username: your-email@qq.com   # 真实邮箱在 application-local.yml 覆盖
+    properties:
+      mail.smtp.ssl.enable: true
+    # password（SMTP 授权码）在 application-local.yml 覆盖，不入库
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
+
