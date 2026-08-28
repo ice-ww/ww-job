@@ -1,7 +1,7 @@
 # ww-job 失败告警（Failure Alert）设计
 
 > 日期：2026-08-28
-> 状态：已设计（待实现）
+> 状态：已实现并端到端验证通过（真实 SMTP 收件）
 > 背景：任务失败散落在 5 处落 status=2/3，无人知晓；`job_info.alarm_config` 字段自建表起预留，一直未用。需要任务失败时自动通知运维。
 
 ---
@@ -147,14 +147,19 @@ spring.mail.host, spring.mail.port, spring.mail.username, spring.mail.password
 
 前置：`application-local.yml` 配好真实 SMTP（用户自己的邮箱服务商 + 授权码），`alarm_config` 填收件人邮箱。
 
-| 场景 | 期望结果 |
+| 场景 | 实测结果 |
 | --- | --- |
-| 建 `failDemoHandler` 任务 + `alarm_config`=自己邮箱，手动触发 | ✅ 回调 status=2 → 30s 内监控器扫描 → 收件箱收到告警邮件 |
-| 连续多次触发同一失败任务 | ✅ 去重窗口内只收到 1 封告警（jobId 级去重） |
-| 不填 `alarm_config` 的失败任务 | ✅ 不发告警 |
-| 正常成功任务 | ✅ 不发告警（无新失败日志） |
-| 配 SINGLE + 并发触发制造被阻塞日志 | ✅ 不发告警（handle_time=null 自动排除） |
-| 停掉 executor 触发 | ✅ 投递失败 status=2 也告警 |
+| 建 `failDemoHandler` 任务 + `alarm_config`=自己邮箱，手动触发 | ✅ 回调 status=2 → 30s 内收件箱收到告警邮件（job_log 9416） |
+| 连续多次触发同一失败任务 | ✅ 去重窗口内不重发；窗口过期后 9417/9418 两条聚合成一封补发 |
+| 不填 `alarm_config` 的失败任务 | ✅ 不发告警（扫描器静默跳过） |
+| 正常成功任务（status=1） | ✅ 不发告警（SQL 只查 status IN (2,3)） |
+| 配 SINGLE + 并发触发制造被阻塞日志 | ⬜ 未实测（`handle_time=null` 自动排除，逻辑上覆盖） |
+| 停掉 executor 触发（投递失败 status=2） | ⬜ 未实测（与回调失败同为 status=2 同一告警路径，逻辑上覆盖） |
+
+### 验证中发现并修复的问题
+
+1. **邮件发件人未设置 → QQ SMTP 501**：`SimpleMailMessage` 没调 `setFrom()` 时，JavaMail 用本机用户名当发件人（`MAIL FROM: <本机用户名@...>`），QQ 校验「发件人必须等于认证用户」直接 501。修复：`MailAlarmHandler` 注入 `@Value("${spring.mail.username}")` 并 `setFrom()`。
+2. **`dispatchOne` 的 `executor_address` 未落库**（分片广播抽取时遗留，本次被告警邮件暴露）：`log.setExecutorAddress(address)` 只改内存对象，没 `updateById` → `job_log.executor_address` 一直 null，告警正文「执行器」显示 null。修复：`dispatchOne` 在 `setExecutorAddress` 后补 `jobLogMapper.updateById(log)`。
 
 ---
 
