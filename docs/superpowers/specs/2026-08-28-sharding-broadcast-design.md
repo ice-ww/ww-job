@@ -1,7 +1,7 @@
 # ww-job 分片广播（Sharding Broadcast）设计
 
 > 日期：2026-08-28
-> 状态：已与用户确认关键决策，待用户 review
+> 状态：已实现并端到端验证通过（2 台 executor 实测）
 > 背景：单个慢任务串行跑完整体数据耗时不可接受；需要把一个任务按执行器数量切片，并行处理。
 
 ---
@@ -97,12 +97,14 @@ admin：取全部在线执行器（假设 3 台 A、B、C），total=3
 
 前置：同一 jobGroup 注册 **2 台 executor**（改 executor 配置端口/地址，或开两个实例）。
 
-| 场景 | 期望 |
+| 场景 | 实测结果 |
 | --- | --- |
-| 建 `routeStrategy="sharding"` + `shardingDemoHandler` 任务，手动触发一次 | `job_log` 出现 **2 条**日志，`shard_index` = 0 和 1，各台独立回调，最终各自 status=1 |
-| 看两台 executor 控制台 | 各打印自己的 `shard=0/2`、`shard=1/2`，且**同时**在执行（并发） |
-| 停掉其中一台 executor 再触发 | 只剩在线那台的 1 条日志，shard=0/1 |
-| 手动触发的同时看互斥 | 广播不参与 SINGLE：即使别处有 status=0，广播照发（对比单台 SINGLE 会被挡） |
+| 建 `routeStrategy="sharding"` + `shardingDemoHandler` 任务，手动触发一次（2 台在线） | ✅ `job_log` 出现 **2 条**日志，`shard_index` = 0 和 1，各台独立回调，最终各自 status=1 |
+| 看两台 executor 控制台 | ✅ 各打印自己的 `shard=0/2`、`shard=1/2`，且同时执行（并发） |
+| 停掉其中一台 executor 再触发（等注册 90s 过期后） | ✅ 只剩在线那台的 1 条日志，shard=0/1 |
+| 全停 executor 再触发 | ✅ 1 条日志 status=2「无可用执行器」 |
+| 手动触发的同时看互斥 | ✅ 配 `blockStrategy=SINGLE` 的 sharding 任务连发两次（2 台×2 次），4 条日志全正常执行，无「被阻塞丢弃」——广播绕过 SINGLE |
+| 回归：单台任务（routeStrategy 默认） | ✅ 1 条日志 shard_index=0，控制台 `shard=0/0`，行为不变 |
 
 ---
 
