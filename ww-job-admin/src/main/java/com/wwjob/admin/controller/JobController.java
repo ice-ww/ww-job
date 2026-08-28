@@ -7,6 +7,7 @@ import com.wwjob.admin.mapper.JobInfoMapper;
 import com.wwjob.admin.service.JobTriggerService;
 import com.wwjob.core.model.ReturnT;
 import com.wwjob.core.util.CronUtil;
+import org.apache.ibatis.annotations.Delete;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -40,9 +41,12 @@ public class JobController {
 
     @GetMapping("/page")
     public Page<JobInfo> page(@RequestParam(defaultValue = "1") long page,
-                              @RequestParam(defaultValue = "10") long size) {
-        return jobInfoMapper.selectPage(new Page<>(page, size),
-                new QueryWrapper<JobInfo>().orderByDesc("id"));
+                              @RequestParam(defaultValue = "10") long size,
+                              @RequestParam(required = false) Long jobGroupId) {
+        QueryWrapper<JobInfo> qw = new QueryWrapper<>();
+        if (jobGroupId != null) qw.eq("job_group_id", jobGroupId);
+        qw.orderByDesc("id");
+        return jobInfoMapper.selectPage(new Page<>(page, size), qw);
     }
 
     @PostMapping("/{id}/trigger")
@@ -65,6 +69,12 @@ public class JobController {
         JobInfo job = jobInfoMapper.selectById(id);
         job.setTriggerStatus(0);
         jobInfoMapper.updateById(job);
+        return ReturnT.success();
+    }
+
+    @DeleteMapping("/{id}")
+    public ReturnT<String> delete(@PathVariable Long id) {
+        jobInfoMapper.deleteById(id);
         return ReturnT.success();
     }
 }
