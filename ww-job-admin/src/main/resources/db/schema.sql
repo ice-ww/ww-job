@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS job_log (
     handle_code INT COMMENT '200成功 500失败',
     handle_msg VARCHAR(1024) COMMENT '失败信息',
     status TINYINT DEFAULT 0 COMMENT '0运行中 1成功 2失败 3未知(超时/被阻塞，结果不确定)',
+    shard_index INT NOT NULL DEFAULT 0 COMMENT '分片下标，单台任务=0',
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
     KEY idx_job (job_id),
     KEY idx_create (create_time)

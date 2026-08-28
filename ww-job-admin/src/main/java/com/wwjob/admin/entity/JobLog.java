@@ -30,7 +30,9 @@ public class JobLog {
     private Integer handleCode;
     private String handleMsg;
     private Integer status;
+    private Integer shardIndex;     // 分片索引
     private LocalDateTime createTime;
+
 
     public JobLog() {
     }
@@ -49,6 +51,8 @@ public class JobLog {
         this.status = status;
         this.createTime = createTime;
     }
+
+
 
     /**
      * 获取
@@ -242,8 +246,24 @@ public class JobLog {
         this.createTime = createTime;
     }
 
+    /**
+     * 获取
+     * @return shardIndex
+     */
+    public Integer getShardIndex() {
+        return shardIndex;
+    }
+
+    /**
+     * 设置
+     * @param shardIndex
+     */
+    public void setShardIndex(Integer shardIndex) {
+        this.shardIndex = shardIndex;
+    }
+
     public String toString() {
-        return "JobLog{id = " + id + ", jobId = " + jobId + ", jobGroupId = " + jobGroupId + ", executorAddress = " + executorAddress + ", handlerName = " + handlerName + ", triggerType = " + triggerType + ", triggerTime = " + triggerTime + ", handleTime = " + handleTime + ", handleCode = " + handleCode + ", handleMsg = " + handleMsg + ", status = " + status + ", createTime = " + createTime + "}";
+        return "JobLog{STATUS_RUNNING = " + STATUS_RUNNING + ", STATUS_SUCCESS = " + STATUS_SUCCESS + ", STATUS_FAIL = " + STATUS_FAIL + ", STATUS_UNKNOWN = " + STATUS_UNKNOWN + ", id = " + id + ", jobId = " + jobId + ", jobGroupId = " + jobGroupId + ", executorAddress = " + executorAddress + ", handlerName = " + handlerName + ", triggerType = " + triggerType + ", triggerTime = " + triggerTime + ", handleTime = " + handleTime + ", handleCode = " + handleCode + ", handleMsg = " + handleMsg + ", status = " + status + ", shardIndex = " + shardIndex + ", createTime = " + createTime + ", shardIndex = " + shardIndex + "}";
     }
 }
 
