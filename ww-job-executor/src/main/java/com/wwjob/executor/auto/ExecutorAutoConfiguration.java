@@ -25,9 +25,9 @@ import java.util.concurrent.TimeUnit;
 public class ExecutorAutoConfiguration {
 
     @Bean
-    public ExecutorRegistry executorRegistry(ExecutorProperties props) {
+    public ExecutorRegistry executorRegistry(ExecutorProperties props, AdminAddressPool adminPool) {
 
-        return new ExecutorRegistry(props);
+        return new ExecutorRegistry(props, adminPool);
     }
     /** 任务执行线程池：有界队列 + AbortPolicy，满则拒绝快速失败（/run 返回"执行器繁忙"） */
     @Bean

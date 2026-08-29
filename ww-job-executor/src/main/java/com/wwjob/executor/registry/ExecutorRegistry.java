@@ -7,27 +7,22 @@ package com.wwjob.executor.registry;
 
 import com.wwjob.core.model.RegistryParam;
 import com.wwjob.executor.ExecutorProperties;
+import com.wwjob.executor.admin.AdminAddressPool;
 import jakarta.annotation.PostConstruct;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.web.client.RestTemplate;
 
 import java.net.InetAddress;
 
 /**
- * 执行器注册器：启动时注册 + 定时心跳，向 admin 的 /registry 上报。
+ * 执行器注册器：启动时注册 + 定时心跳，向 admin 的 /registry 广播（单台失败不影响其他）。
  */
 public class ExecutorRegistry {
     private final ExecutorProperties props;
-    private final RestTemplate restTemplate;
+    private final AdminAddressPool adminPool;
 
-    public ExecutorRegistry(ExecutorProperties props) {
+    public ExecutorRegistry(ExecutorProperties props, AdminAddressPool adminPool) {
         this.props = props;
-        // @Scheduled 默认单线程：心跳若无限阻塞，后续心跳全部停摆，执行器会被 90s 后误判下线。故加超时
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(3000);
-        factory.setReadTimeout(10000);
-        this.restTemplate = new RestTemplate(factory);
+        this.adminPool = adminPool;
     }
 
     @PostConstruct
@@ -46,12 +41,9 @@ public class ExecutorRegistry {
             RegistryParam param = new RegistryParam();
             param.setRegistryKey(props.getAppName());
             param.setRegistryValue(value);
-            for (String admin : props.getAdminAddresses().split(",")) {
-                restTemplate.postForObject(admin + "/registry", param, Object.class);
-            }
+            adminPool.broadcast("/registry", param);  // 广播到所有 admin，单台失败不影响其它
         } catch (Exception e) {
             System.err.println("register failed: " + e.getMessage());
         }
     }
-
 }
