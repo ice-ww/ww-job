@@ -121,10 +121,12 @@ onMounted(async () => {
 
     <el-pagination
       class="pager"
-      layout="total, prev, pager, next, jumper"
+      layout="total, sizes, prev, pager, next, jumper"
       :total="total"
+      :page-sizes="[10, 20, 50, 100]"
       :page-size="query.size"
       :current-page="query.page"
+      @size-change="(s) => { query.size = s; query.page = 1; loadLogs() }"
       @current-change="(p) => { query.page = p; loadLogs() }"
     />
 
