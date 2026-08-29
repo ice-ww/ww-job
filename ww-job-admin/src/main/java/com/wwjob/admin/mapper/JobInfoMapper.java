@@ -14,4 +14,10 @@ import org.apache.ibatis.annotations.Select;
 public interface JobInfoMapper extends BaseMapper<JobInfo> {
     @Select("SELECT * FROM job_info WHERE id = #{id} FOR UPDATE")
     JobInfo selectByIdForUpdate(@Param("id") long id);
+
+    @Select("SELECT COUNT(*) FROM job_info")
+    long countAll();
+
+    @Select("SELECT COUNT(*) FROM job_info WHERE trigger_status = 1")
+    long countEnabled();
 }
