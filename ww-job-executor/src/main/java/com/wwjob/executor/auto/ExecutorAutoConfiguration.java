@@ -1,6 +1,7 @@
 package com.wwjob.executor.auto;
 
 import com.wwjob.executor.ExecutorProperties;
+import com.wwjob.executor.admin.AdminAddressPool;
 import com.wwjob.executor.callback.CallbackReporter;
 import com.wwjob.executor.registry.ExecutorRegistry;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -41,6 +42,11 @@ public class ExecutorAutoConfiguration {
     @Bean
     public CallbackReporter callbackReporter(ExecutorProperties props) {
         return new CallbackReporter(props);
+    }
+
+    @Bean
+    public AdminAddressPool adminAddressPool(ExecutorProperties props) {
+        return new AdminAddressPool(props);
     }
 
 }
