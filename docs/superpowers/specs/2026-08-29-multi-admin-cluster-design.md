@@ -1,7 +1,7 @@
 # ww-job 多 admin 集群 + 分布式锁 设计
 
 > 日期：2026-08-29
-> 状态：设计已对齐，待实现
+> 状态：已实现并端到端验证（2026-08-29）
 > 背景：调度中心当前为**单 admin**（每台 admin 独立内存时间轮 + 进程内去重）。部署多 admin 时，所有实例都从共享 DB 预读并各自触发，**同一 cron 任务会被执行多次**；失败告警的 `lastAlertAt` 内存去重也会失效（重复发邮件）。本次给调度中心补上**分布式互斥**，支持多 admin 同时运行。
 
 ---
@@ -193,8 +193,12 @@ private void upsertAlertState(long jobId, long now) {
         st.setLastAlertAt(now);
         alertStateMapper.insert(st);
     } else {
-        st.setLastAlertAt(now);
-        alertStateMapper.updateById(st);
+        // 只构造要改的字段再 updateById：若带完整旧实体，MyBatis-Plus 会把 update_time 显式写回旧值，
+        // 屏蔽 ON UPDATE CURRENT_TIMESTAMP（实测发现并已修复，见 §8）
+        JobAlertState upd = new JobAlertState();
+        upd.setId(st.getId());
+        upd.setLastAlertAt(now);
+        alertStateMapper.updateById(upd);
     }
 }
 ```
@@ -225,9 +229,22 @@ private void upsertAlertState(long jobId, long now) {
 | 5 | 10min 内再次失败 | 不发重复告警（DB 去重窗口生效） |
 | 6 | 手动触发 demoHandler | 正常执行一次（不受 claimNextTime 影响） |
 
-### 实测记录
+### 实测记录（2026-08-29 双 admin 实机验证）
 
-（待实现后回填）
+环境：admin-8080(local) + admin-8082(local，`$env:SERVER_PORT="8082"` 后同命令启动) 共用一库，executor-8081 只连 8080，前端 vite。
+
+| # | 结果 |
+| --- | --- |
+| 1 | ✅ 两台 admin 均正常，`/jobgroup/list`、`/dashboard/stats` 正常返回，共用同一 MySQL |
+| 2 | ✅ jobId=25（cron `0/5 * * * * ?`）双 admin 下每 5s 一条，18:04:40–18:05:50 共 8 条，**无重复**——claimNextTime 行锁幂等生效 |
+| 3 | ✅ 停掉 8082 后 8080 继续每 5s 一条，调度不中断 |
+| 4 | ✅ 手动触发 job 26（failDemoHandler，配 alarm_config）只收到**一封**告警邮件；`job_alert_state` 落库 (26, 1787998338982)，`last_alert_at` 更新为 18:12 新时间戳 |
+| 5 | ✅ 10min 内再次失败不发重复告警（窗口内触发无第二封，T8 已验证） |
+| 6 | ✅ 手动触发 demoHandler 正常执行一次 |
+
+**验证中发现并修复的一个实现细节**：`upsertAlertState` 原实现把 `selectOne` 查出的完整实体直接 `updateById`，MyBatis-Plus 默认 NOT_NULL 策略把实体里所有非空字段（含旧 `update_time`）写回 SET 子句，`update_time` 被显式赋回旧值 → MySQL `ON UPDATE CURRENT_TIMESTAMP` 不触发（update_time 恒等于创建时间）。`last_alert_at` 仍正确更新，去重逻辑不受影响。已改为「只构造 id + lastAlertAt 的新实体再 updateById」，`update_time` 恢复正常（见 §9 局限 5）。
+
+**已知异常**：③ 中出现一次约 35s 的调度间隙（18:05:00 → 18:05:40），与验证期间重启 admin 的操作时间点重合，判定为操作所致，非幂等缺陷。
 
 ---
 
@@ -237,6 +254,7 @@ private void upsertAlertState(long jobId, long now) {
 2. **手动触发无跨实例幂等**：用户对同一任务连点两次会触发两次（单 admin 亦然），属操作层面，非集群缺陷。
 3. **claimNextTime 只拦截 cron 触发**：`sharding` 广播走 `trigger()`（broadcast）不经 decide，但广播入口在 claimNextTime 之后，仍受同一触发点互斥保护。
 4. **时间轮多实例重复预读**：预读无副作用，只是多台各自入轮；实际触发由 claimNextTime 幂等拦截，浪费极少量内存/CPU，可接受。
+5. **MyBatis-Plus `updateById` 整行写回会屏蔽 `update_time` 自动更新**：对 `selectOne` 查出的完整实体改一个字段再 `updateById`，默认 NOT_NULL 策略把实体里所有非空字段（含旧 `update_time`）写进 SET 子句，`ON UPDATE CURRENT_TIMESTAMP` 不触发 → update_time 恒等于创建时间。`job_alert_state.upsertAlertState` 已改用"只构造 id + 变更字段"规避；`job_info` 的同类 update（claimNextTime / dispatch / scheduleIfNeeded）仍存在此现象，纯信息列失真、不影响业务正确性，后续可统一处理。
 
 ---
 
