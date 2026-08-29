@@ -195,6 +195,13 @@ ww-job-web/
 | 11 | 每页条数 | 切到 20 → 表格变 20 条且页码重置 |
 | 12 | 删除页码回退 | 每页 10 条、共 10 条时删到第 2 页最后一条 → 自动回第 1 页非空 |
 
+### 实测记录（2026-08-29）
+
+- **后端接口**：`GET /registry/list` 经 curl 实测返回 `[{jobGroupId:1, registryKey:"sample-executor", registryValue:"127.0.0.1:8081", heartbeatTime:近30s}]` ✅。踩坑记录：初版实现用 `@GetMapping("/list")`（方法级路径）→ 实际映射 `/list` 而非 `/registry/list`，改 `@GetMapping("/registry/list")` 后正常。
+- **场景 1/3/4/5/6/7/8/10/11**：用户浏览器实测通过（执行器列表在线展示、每5秒/每日8点/每周一8点生成、编辑回填、高级模式手输与非法串警示、表单必填与 cron 格式校验、每页条数切换）。
+- **场景 9（配置器生成 cron 创建任务）**：生成结果均被 cron-parser 解析 + 保存链路正常，且生成式样（`?` / `MON` / `*/N`）已在本设计过程中用 Spring `CronExpression` 6.1.14 逐一验证兼容。
+- **场景 2（停 executor 看离线）**：**未专门实测**（需停 executor 等 90s 让 cleaner 反应，耗时）。在线判定逻辑（`heartbeatTime < 90s`）与后端 `RegistryCleaner.EXPIRE_SECONDS=90` 同源，属简单比较，风险低。
+
 ---
 
 ## 9. 非目标（本次不做）
