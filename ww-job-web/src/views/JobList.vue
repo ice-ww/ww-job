@@ -2,9 +2,11 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { CronExpressionParser } from 'cron-parser'
 import { pageJobs, createJob, updateJob, triggerJob, startJob, stopJob, deleteJob } from '../api/job'
 import { listGroups } from '../api/group'
 import { ROUTE_STRATEGIES, BLOCK_STRATEGIES, fmtTime } from '../constants'
+import CronBuilder from '../components/CronBuilder.vue'
 
 const router = useRouter()
 
@@ -47,6 +49,28 @@ function onFilterChange() {
 const dialogVisible = ref(false)
 const editingId = ref(null)
 const form = ref({})
+const formRef = ref(null)
+const cronBuilderRef = ref(null)
+
+function validateCron(rule, value, callback) {
+  if (!value) {
+    callback(new Error('请填写 Cron'))
+    return
+  }
+  try {
+    CronExpressionParser.parse(value)
+    callback()
+  } catch (e) {
+    callback(new Error('Cron 格式不正确'))
+  }
+}
+
+const rules = {
+  jobName: [{ required: true, message: '请输入任务名称', trigger: 'blur' }],
+  jobGroupId: [{ required: true, message: '请选择分组', trigger: 'change' }],
+  handlerName: [{ required: true, message: '请输入 JobHandler', trigger: 'blur' }],
+  cron: [{ validator: validateCron, trigger: 'blur' }],
+}
 
 function openCreate() {
   editingId.value = null
@@ -64,20 +88,19 @@ function openEdit(row) {
   dialogVisible.value = true
 }
 
-async function save() {
-  if (!form.value.jobName || !form.value.jobGroupId || !form.value.handlerName || !form.value.cron) {
-    ElMessage.warning('请填写必填项：任务名称 / 分组 / Handler / Cron')
-    return
-  }
-  if (editingId.value) {
-    await updateJob(form.value)
-    ElMessage.success('已更新')
-  } else {
-    await createJob({ ...form.value, triggerStatus: 0 })
-    ElMessage.success('已创建，默认停用，可在列表启用')
-  }
-  dialogVisible.value = false
-  loadJobs()
+function save() {
+  formRef.value.validate(async (valid) => {
+    if (!valid) return
+    if (editingId.value) {
+      await updateJob(form.value)
+      ElMessage.success('已更新')
+    } else {
+      await createJob({ ...form.value, triggerStatus: 0 })
+      ElMessage.success('已创建，默认停用，可在列表启用')
+    }
+    dialogVisible.value = false
+    loadJobs()
+  })
 }
 
 // ---- 操作 ----
@@ -100,6 +123,9 @@ async function onDelete(row) {
   await ElMessageBox.confirm(`确认删除任务「${row.jobName}」？此操作不可恢复。`, '删除', { type: 'error' })
   await deleteJob(row.id)
   ElMessage.success('已删除')
+  if (jobs.value.length === 1 && query.value.page > 1) {
+    query.value.page -= 1
+  }
   loadJobs()
 }
 
@@ -138,7 +164,7 @@ onMounted(() => {
         </template>
       </el-table-column>
       <el-table-column prop="handlerName" label="Handler" min-width="140" show-overflow-tooltip />
-      <el-table-column prop="cron" label="Cron" width="140" />
+      <el-table-column prop="cron" label="Cron" width="140" show-overflow-tooltip />
       <el-table-column label="路由策略" width="100">
         <template #default="{ row }">
           {{ ROUTE_STRATEGIES.find((s) => s.value === row.routeStrategy)?.label || row.routeStrategy }}
@@ -177,28 +203,33 @@ onMounted(() => {
 
     <el-pagination
       class="pager"
-      layout="total, prev, pager, next, jumper"
+      layout="total, sizes, prev, pager, next, jumper"
       :total="total"
+      :page-sizes="[10, 20, 50, 100]"
       :page-size="query.size"
       :current-page="query.page"
+      @size-change="(s) => { query.size = s; query.page = 1; loadJobs() }"
       @current-change="(p) => { query.page = p; loadJobs() }"
     />
 
     <el-dialog v-model="dialogVisible" :title="editingId ? '编辑任务' : '新建任务'" width="640px">
-      <el-form label-width="110px">
-        <el-form-item label="任务名称" required>
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="110px">
+        <el-form-item label="任务名称" prop="jobName">
           <el-input v-model="form.jobName" placeholder="如 alert-fail-job" />
         </el-form-item>
-        <el-form-item label="分组" required>
+        <el-form-item label="分组" prop="jobGroupId">
           <el-select v-model="form.jobGroupId" placeholder="选择分组" style="width: 100%">
             <el-option v-for="g in groupOptions" :key="g.value" :label="g.label" :value="g.value" />
           </el-select>
         </el-form-item>
-        <el-form-item label="JobHandler" required>
+        <el-form-item label="JobHandler" prop="handlerName">
           <el-input v-model="form.handlerName" placeholder="如 failDemoHandler" />
         </el-form-item>
-        <el-form-item label="Cron" required>
-          <el-input v-model="form.cron" placeholder="6 段：秒 分 时 日 月 周，如 0 */5 * * * ?" />
+        <el-form-item label="Cron" prop="cron">
+          <div class="cron-row">
+            <el-input v-model="form.cron" placeholder="6 段：秒 分 时 日 月 周，如 0 */5 * * * ?" />
+            <el-button title="Cron 配置器" @click="cronBuilderRef.open()">🔧</el-button>
+          </div>
         </el-form-item>
         <el-form-item label="任务描述">
           <el-input v-model="form.jobDesc" />
@@ -231,10 +262,13 @@ onMounted(() => {
         <el-button type="primary" @click="save">保存</el-button>
       </template>
     </el-dialog>
+
+    <CronBuilder ref="cronBuilderRef" v-model="form.cron" />
   </el-card>
 </template>
 
 <style scoped>
 .toolbar { margin-bottom: 12px; display: flex; gap: 12px; align-items: center; }
 .pager { margin-top: 12px; justify-content: flex-end; }
+.cron-row { display: flex; gap: 8px; width: 100%; }
 </style>
