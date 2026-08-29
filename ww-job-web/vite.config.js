@@ -11,6 +11,7 @@ export default defineConfig({
       '/joblog': 'http://localhost:8080',
       '/jobgroup': 'http://localhost:8080',
       '/registry': 'http://localhost:8080',
+      '/dashboard': 'http://localhost:8080',
     },
   },
 })

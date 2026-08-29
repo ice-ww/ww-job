@@ -65,6 +65,9 @@ onMounted(async () => {
   if (route.query.jobId) {
     query.value.jobId = Number(route.query.jobId)
   }
+  if (route.query.status !== undefined) {
+    query.value.status = Number(route.query.status)
+  }
   loadLogs()
 })
 </script>

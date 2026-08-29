@@ -6,6 +6,7 @@
     <el-aside width="200px" class="aside">
       <div class="logo">ww-job</div>
       <el-menu router :default-active="$route.path">
+        <el-menu-item index="/dashboard">概览</el-menu-item>
         <el-menu-item index="/jobs">任务管理</el-menu-item>
         <el-menu-item index="/joblogs">执行日志</el-menu-item>
         <el-menu-item index="/registries">执行器列表</el-menu-item>
