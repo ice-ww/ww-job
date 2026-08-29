@@ -33,7 +33,7 @@
 **Interfaces:**
 - Produces: `JobLogMapper.selectRecentlyFailed(LocalDateTime from)` 返回 `List<JobLog>`
 
-- [ ] **Step 1: pom 加依赖**
+- [x] **Step 1: pom 加依赖**
   在 `ww-job-admin/pom.xml` 的 `<dependencies>` 里加：
   ```xml
   <dependency>
@@ -44,16 +44,17 @@
   （Spring Boot 3.3 parent 统一管理版本，不需要 `<version>`）
 - [ ] **Step 2: JobLogMapper 加查询**
   加方法 + import `java.time.LocalDateTime`：
+  
   ```java
   @Select("SELECT l.* FROM job_log l WHERE l.status IN (2, 3) AND l.handle_time >= #{from}")
   List<JobLog> selectRecentlyFailed(@Param("from") LocalDateTime from);
   ```
   （`@Param` 需 import `org.apache.ibatis.annotations.Param`，文件里已有）
-- [ ] **Step 3: 确认 mail 配置在位**
+- [x] **Step 3: 确认 mail 配置在位**
   确认 `application.yml` 有 `spring.mail` 占位（host/port/ssl），`application-local.yml` 有 username/授权码。已填则跳过。
-- [ ] **Step 4: 编译验证**
+- [x] **Step 4: 编译验证**
   `mvn -pl ww-job-admin -am compile` 通过。
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   `git commit -m "feat: admin 加 spring-boot-starter-mail 依赖 + JobLogMapper 新失败查询"`
 
 ---
@@ -68,7 +69,7 @@
 - Consumes: `spring.mail.*` 配置（Task 1 确认）
 - Produces: `AlarmHandler.send(String alarmConfig, String title, String content) throws Exception`
 
-- [ ] **Step 1: 写接口 `AlarmHandler`**
+- [x] **Step 1: 写接口 `AlarmHandler`**
   ```java
   public interface AlarmHandler {
       /** 发送告警。alarmConfig 由各渠道自行解析（邮件 = 逗号分隔邮箱）。失败抛异常 */
@@ -76,7 +77,7 @@
   }
   ```
   注释写清「渠道内聚：每个实现自己解析 alarmConfig」。
-- [ ] **Step 2: 写 `MailAlarmHandler`（@Component 实现）**
+- [x] **Step 2: 写 `MailAlarmHandler`（@Component 实现）**
   - 构造器注入 `JavaMailSender mailSender`
   - `send(String alarmConfig, String title, String content)`：
     1. `alarmConfig.split(",")` → 每个 trim 掉空白
@@ -84,9 +85,9 @@
     3. 收件人列表为空 → 直接 return（不抛）
   - 发送异常不 catch，向上抛（交给 JobFailMonitor 记日志）
   - 注意：`SimpleMailMessage` 是**邮件实现**，不 import 接口——接口在同一个包
-- [ ] **Step 3: 编译**
+- [x] **Step 3: 编译**
   `mvn -pl ww-job-admin -am compile` 通过。
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
   `git commit -m "feat: AlarmHandler 接口 + MailAlarmHandler 邮件渠道"`
 
 ---
@@ -101,11 +102,12 @@
 - Produces: `@Scheduled` 扫描任务，每 30s 自动跑
 
 - [ ] **Step 1: 写类骨架**
+  
   - `@Component`，构造器注入 `JobLogMapper`、`JobInfoMapper`、`AlarmHandler`
   - 常量 `private static final int WINDOW_MINUTES = 10;`
   - 去重表 `private final ConcurrentHashMap<Long, Long> lastAlertAt = new ConcurrentHashMap<>();`（jobId → 上次告警 epoch millis）
   - 私有 `Logger`（照项目现有类用 `org.slf4j.Logger/LoggerFactory`）
-- [ ] **Step 2: 写 `scan()` 主逻辑**
+- [x] **Step 2: 写 `scan()` 主逻辑**
   `@Scheduled(fixedRate = 30000)`，整体逻辑：
   ```
   try {
@@ -128,7 +130,7 @@
       logger.error("失败告警扫描异常", e);   // 绝不向上抛，不能影响调度
   }
   ```
-- [ ] **Step 3: 写 `buildContent(JobInfo job, List<JobLog> logs)`**
+- [x] **Step 3: 写 `buildContent(JobInfo job, List<JobLog> logs)`**
   按 spec §6 格式。单条：
   ```
   【ww-job 任务告警】
@@ -142,13 +144,13 @@
   ```
   多条（`logs.size() > 1`）→ 每条前面加 `— 日志 {i}/{size} —` 分隔行，拼接成一个 String。
   （字符串拼接用 StringBuilder；`handleTime` 是 `LocalDateTime`，直接用 `toString()`）
-- [ ] **Step 4: 编译**
+- [x] **Step 4: 编译**
   `mvn -pl ww-job-admin -am compile` 通过。
-- [ ] **Step 5: 启动冒烟**
+- [x] **Step 5: 启动冒烟**
   以 local profile 启动 admin（`mvn -pl ww-job-admin -am spring-boot:run -Dspring-boot.run.profiles=local`），确认：
   - 启动无报错（starter-mail 已自动配置 JavaMailSender）
   - 日志出现 `JobFailMonitor` 的 `@Scheduled` 每 30s 无异常
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
   `git commit -m "feat: JobFailMonitor 失败监控器（扫描+聚合+去重+邮件告警）"`
 
 ---

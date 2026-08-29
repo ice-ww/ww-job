@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS job_alert_state (
 
 > `INSERT ... ON DUPLICATE KEY UPDATE lock_name = lock_name` 是空操作：schema 每次启动都执行，第二次起 INSERT 撞主键自动忽略，保证幂等。
 
-- [ ] **Step 2: 自测**
+- [x] **Step 2: 自测**
 
 重启 admin（先停旧的）：
 ```bash
@@ -68,7 +68,7 @@ SHOW TABLES;
 SELECT * FROM job_lock;
 ```
 
-- [ ] **Step 3: Commit**（建议信息）
+- [x] **Step 3: Commit**（建议信息）
 
 ```bash
 git add ww-job-admin/src/main/resources/db/schema.sql
@@ -86,7 +86,7 @@ git commit -m "feat: 新增 job_lock / job_alert_state 表（分布式锁 + 告�
 **Consumes:** T1 的两张表。
 **Produces:** 两个实体类，T3 的 Mapper、T4 的 JobLockService、T7 的 JobFailMonitor 依赖。
 
-- [ ] **Step 1: JobLock.java**（照 `JobRegistry` 风格；主键 String 非自增）
+- [x] **Step 1: JobLock.java**（照 `JobRegistry` 风格；主键 String 非自增）
 
 ```java
 package com.wwjob.admin.entity;
@@ -127,7 +127,7 @@ public class JobLock {
 }
 ```
 
-- [ ] **Step 2: JobAlertState.java**（照 `JobRegistry` 风格；主键自增）
+- [x] **Step 2: JobAlertState.java**（照 `JobRegistry` 风格；主键自增）
 
 ```java
 package com.wwjob.admin.entity;
@@ -172,14 +172,14 @@ public class JobAlertState {
 }
 ```
 
-- [ ] **Step 3: 编译自测**
+- [x] **Step 3: 编译自测**
 
 ```bash
 mvn -pl ww-job-admin -am compile -q
 ```
 Expected: BUILD SUCCESS。
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add ww-job-admin/src/main/java/com/wwjob/admin/entity/JobLock.java ww-job-admin/src/main/java/com/wwjob/admin/entity/JobAlertState.java
@@ -197,7 +197,7 @@ git commit -m "feat: JobLock / JobAlertState 实体"
 **Consumes:** T2 实体。
 **Produces:** `selectForUpdate(lockName)`（行锁拿锁）、`JobAlertStateMapper`（BaseMapper，`selectOne`/`insert`/`updateById` 走内置方法）。T4 / T7 依赖。
 
-- [ ] **Step 1: JobLockMapper.java**（照 `JobInfoMapper.selectByIdForUpdate` 的行锁写法）
+- [x] **Step 1: JobLockMapper.java**（照 `JobInfoMapper.selectByIdForUpdate` 的行锁写法）
 
 ```java
 package com.wwjob.admin.mapper;
@@ -218,7 +218,7 @@ public interface JobLockMapper extends BaseMapper<JobLock> {
 }
 ```
 
-- [ ] **Step 2: JobAlertStateMapper.java**
+- [x] **Step 2: JobAlertStateMapper.java**
 
 ```java
 package com.wwjob.admin.mapper;
@@ -234,9 +234,9 @@ public interface JobAlertStateMapper extends BaseMapper<JobAlertState> {
 }
 ```
 
-- [ ] **Step 3: 编译自测**（同 T2，`mvn -pl ww-job-admin -am compile -q` → SUCCESS）
+- [x] **Step 3: 编译自测**（同 T2，`mvn -pl ww-job-admin -am compile -q` → SUCCESS）
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add ww-job-admin/src/main/java/com/wwjob/admin/mapper/JobLockMapper.java ww-job-admin/src/main/java/com/wwjob/admin/mapper/JobAlertStateMapper.java
@@ -248,12 +248,13 @@ git commit -m "feat: JobLockMapper（selectForUpdate 行锁）+ JobAlertStateMap
 ### Task 4: JobLockService.withLock 全局锁
 
 **Files:**
+
 - Create: `D:\javacode\ww-job\ww-job-admin\src\main\java\com\wwjob\admin\service\JobLockService.java`
 
 **Consumes:** T3 `JobLockMapper`.
 **Produces:** `withLock(String lockName, Runnable body)` —— T7 告警扫描用它串行化多 admin。
 
-- [ ] **Step 1: JobLockService.java**
+- [x] **Step 1: JobLockService.java**
 
 ```java
 package com.wwjob.admin.service;
@@ -286,9 +287,9 @@ public class JobLockService {
 }
 ```
 
-- [ ] **Step 2: 编译自测**（`mvn -pl ww-job-admin -am compile -q` → SUCCESS）
+- [x] **Step 2: 编译自测**（`mvn -pl ww-job-admin -am compile -q` → SUCCESS）
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add ww-job-admin/src/main/java/com/wwjob/admin/service/JobLockService.java
@@ -306,7 +307,7 @@ git commit -m "feat: JobLockService.withLock 分布式锁（事务内 FOR UPDATE
 **Consumes:** 现有 `jobInfoMapper`（`selectByIdForUpdate` / `updateById`）、`CronUtil`.
 **Produces:** `boolean claimNextTime(long jobId, String cron)` —— T6 ScheduleHelper 触发前调用。
 
-- [ ] **Step 1: 接口加方法**
+- [x] **Step 1: 接口加方法**
 
 `JobTriggerService.java` 接口内追加：
 
@@ -318,7 +319,7 @@ git commit -m "feat: JobLockService.withLock 分布式锁（事务内 FOR UPDATE
     boolean claimNextTime(long jobId, String cron);
 ```
 
-- [ ] **Step 2: 实现类加方法 + import**
+- [x] **Step 2: 实现类加方法 + import**
 
 `JobTriggerServiceImpl.java` 加 import `com.wwjob.core.util.CronUtil;`（`JobInfo`/`JobInfoMapper` 已 import），并在类内追加：
 
@@ -345,9 +346,9 @@ git commit -m "feat: JobLockService.withLock 分布式锁（事务内 FOR UPDATE
 
 > 语义：行锁持有到事务提交（`@Transactional` 独立 Bean 代理生效）。A 先推进提交后，B 拿锁看到 `next_time` 已在未来 → 返回 false 跳过。手动触发不经过此方法（由 `decide()` 的 SINGLE 互斥兜底）。
 
-- [ ] **Step 3: 编译自测**（`mvn -pl ww-job-admin -am compile -q` → SUCCESS）
+- [x] **Step 3: 编译自测**（`mvn -pl ww-job-admin -am compile -q` → SUCCESS）
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add ww-job-admin/src/main/java/com/wwjob/admin/service/JobTriggerService.java ww-job-admin/src/main/java/com/wwjob/admin/service/JobTriggerServiceImpl.java
@@ -359,12 +360,13 @@ git commit -m "feat: claimNextTime 触发点行锁幂等（先推进 next_time �
 ### Task 6: ScheduleHelper 触发入口接入 claimNextTime
 
 **Files:**
+
 - Modify: `D:\javacode\ww-job\ww-job-admin\src\main\java\com\wwjob\admin\schedule\ScheduleHelper.java`（94-104 行 trigger lambda、107-119 行 advanceNextTime 删除）
 
 **Consumes:** T5 `claimNextTime`.
 **Produces:** 触发链「claimNextTime → 才 trigger」，单 admin 行为不变，多 admin 幂等。
 
-- [ ] **Step 1: 改 trigger lambda + 删 advanceNextTime**
+- [x] **Step 1: 改 trigger lambda + 删 advanceNextTime**
 
 `scheduleIfNeeded` 内 `timeWheel.addTask` 的 lambda 改为（**删掉 `advanceNextTime(job.getId(), job.getCron());` 这一行**）：
 
@@ -384,9 +386,9 @@ git commit -m "feat: claimNextTime 触发点行锁幂等（先推进 next_time �
 
 同时**删除整个 `advanceNextTime` 方法**（推进逻辑已前移到 `claimNextTime`）。`scheduleIfNeeded` 里的落后追赶逻辑（`next < now` 分支）保留不动。
 
-- [ ] **Step 2: 编译自测**（`mvn -pl ww-job-admin -am compile -q` → SUCCESS；确认无 advanceNextTime 残留引用）
+- [x] **Step 2: 编译自测**（`mvn -pl ww-job-admin -am compile -q` → SUCCESS；确认无 advanceNextTime 残留引用）
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add ww-job-admin/src/main/java/com/wwjob/admin/schedule/ScheduleHelper.java
@@ -403,7 +405,7 @@ git commit -m "refactor: 触发入口接入 claimNextTime，删除 advanceNextTi
 **Consumes:** T2 `JobAlertState`、T3 `JobAlertStateMapper`、T4 `withLock`.
 **Produces:** 多 admin 下同一失败只发一封告警；10min 防轰炸窗口由内存改为 DB。
 
-- [ ] **Step 1: 全文改造为下列内容**
+- [x] **Step 1: 全文改造为下列内容**
 
 ```java
 package com.wwjob.admin.alarm;
@@ -526,9 +528,9 @@ public class JobFailMonitor {
 
 > 关键点：删掉了内存 `lastAlertAt`；`scanLocked` 是 `Runnable`（method reference），不能声明 checked exception，故 `alarmHandler.send`（`throws Exception`）包成 `RuntimeException` 抛出 → 事务回滚 → `scan()` catch 记日志，下次重扫重试。
 
-- [ ] **Step 2: 编译自测**（`mvn -pl ww-job-admin -am compile -q` → SUCCESS）
+- [x] **Step 2: 编译自测**（`mvn -pl ww-job-admin -am compile -q` → SUCCESS）
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add ww-job-admin/src/main/java/com/wwjob/admin/alarm/JobFailMonitor.java
@@ -541,14 +543,14 @@ git commit -m "feat: 告警去重落库（alert_lock 全局锁 + job_alert_state
 
 **Files:** 无代码改动（验证）。可先 `git status` 确认工作区干净再开始。
 
-- [ ] **Step 1: 全量编译**
+- [x] **Step 1: 全量编译**
 
 ```bash
 mvn clean compile -q
 ```
 Expected: BUILD SUCCESS（四个模块）。
 
-- [ ] **Step 2: 起单 admin + executor + 前端**
+- [x] **Step 2: 起单 admin + executor + 前端**
 
 三窗口：
 ```bash
@@ -557,7 +559,7 @@ mvn -pl ww-job-executor-samples -am spring-boot:run
 cd ww-job-web && npm run dev
 ```
 
-- [ ] **Step 3: cron 回归**（调度链未破坏）
+- [x] **Step 3: cron 回归**（调度链未破坏）
 
 建任务并等 ~35s：
 ```bash
@@ -566,14 +568,14 @@ curl -X POST http://localhost:8080/job -H "Content-Type: application/json" \
 ```
 Expected: `GET /joblog/page?jobId=<新建id>&size=50` 每 5s 一条、约 6-7 条、全 SUCCESS、`trigger_time` 无同秒重复。
 
-- [ ] **Step 4: 手动触发回归**
+- [x] **Step 4: 手动触发回归**
 
 ```bash
 curl -X POST http://localhost:8080/job/<id>/trigger
 ```
 Expected: 正常执行一次（新日志 triggerType=manual）。
 
-- [ ] **Step 5: 告警回归（单 admin）**
+- [x] **Step 5: 告警回归（单 admin）**
 
 给 failDemoHandler 任务配 `alarmConfig`（自己的邮箱），手动触发 → 执行失败：
 - Expected: 收到**一封**告警邮件；`job_alert_state` 表出现该 jobId 行、`last_alert_at` 非 0
@@ -581,7 +583,7 @@ Expected: 正常执行一次（新日志 triggerType=manual）。
 
 > 若不想等 10min，可临时把 `WINDOW_MINUTES` 改成 1 测完改回——但注意提交时改回 10。
 
-- [ ] **Step 6: Commit**（T8 无代码变更，跳过；若期间有修 bug，单独提交）
+- [x] **Step 6: Commit**（T8 无代码变更，跳过；若期间有修 bug，单独提交）
 
 ---
 

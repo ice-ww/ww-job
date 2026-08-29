@@ -48,7 +48,7 @@
 
 **参考代码（用户抄写/理解后自研，逐文件）：**
 
-- [ ] **Step 1: 建 `dto` 包，写两个 DTO**
+- [x] **Step 1: 建 `dto` 包，写两个 DTO**
 
 `DashboardStats.java`：
 ```java
@@ -210,7 +210,7 @@ public class DashboardService {
 }
 ```
 
-- [ ] **Step 4: 写 Controller**
+- [x] **Step 4: 写 Controller**
 
 `DashboardController.java`：
 ```java
@@ -235,7 +235,7 @@ public class DashboardController {
 }
 ```
 
-- [ ] **Step 5: 编译**
+- [x] **Step 5: 编译**
 
 ```bash
 cd /d/javacode/ww-job
@@ -243,7 +243,7 @@ mvn -q -pl ww-job-admin -am compile
 ```
 预期：BUILD SUCCESS。
 
-- [ ] **Step 6: 重启 admin(local) + curl 验证**
+- [x] **Step 6: 重启 admin(local) + curl 验证**
 
 ```bash
 # 重启 admin（用户自行重启，保持 local profile）
