@@ -10,6 +10,7 @@
 - **调度中心 + 执行器分离**，HTTP 通信，执行器可独立部署、横向扩容
 - **自研注册中心**：执行器启动自动注册，每 30s 心跳保活，admin 每 10s 剔除 90s 无心跳的节点（自动上下线）
 - **自研时间轮调度器**：DB 预读 + 时间轮精确触发，每秒一个 tick，无 Quartz
+- **多 admin 集群**：多台 admin 同时部署无单点，cron 触发点行锁幂等不重复调度，失败告警全局锁 + DB 去重不重复发送
 - **cron 触发**：cron 表达式解析下次触发时间，触发后自动推进，任务不停机
 - **手动触发**：`triggerType` 区分 `cron` / `manual`
 - **失败自动重试**：可配置 `retryCount` 次重试，重试可能换执行器
@@ -55,7 +56,7 @@
 | Java | 17 | 语言 |
 | Spring Boot | 3.3.5 | 应用框架 |
 | Maven | 多模块 | 工程管理 |
-| MySQL | 8 | 数据存储（4 张表，schema.sql 自动初始化） |
+| MySQL | 8 | 数据存储（6 张表，schema.sql 自动初始化） |
 | MyBatis-Plus | 3.5.7 | ORM |
 | Redis | 7 | 演示/备用（docker-compose 提供） |
 | 自研时间轮 / 注册中心 | - | 调度与执行器发现 |
@@ -79,7 +80,7 @@
 docker compose up -d        # MySQL 8（root/root，库 ww_job）+ Redis 7
 ```
 
-admin 启动时会自动执行 `schema.sql` 建表（job_group / job_info / job_registry / job_log）。
+admin 启动时会自动执行 `schema.sql` 建表（job_group / job_info / job_registry / job_log / job_lock / job_alert_state）。
 
 ### 2. 配置数据库连接
 
@@ -100,6 +101,8 @@ mvn -pl ww-job-admin -am spring-boot:run -Dspring-boot.run.profiles=local
 ```
 
 > 用了 local profile 才会读取 `application-local.yml`；不需要自定义连接时可省略该参数。
+
+> **多 admin 集群**：再多起一台 admin 即集群（换端口，如 PowerShell 里 `$env:SERVER_PORT = "8082"` 再启动），多台共用同一 MySQL。cron 触发点靠行锁前置推进幂等、不重复调度；失败告警靠 `alert_lock` 全局锁 + `job_alert_state` 去重，最多发送一封。
 
 ### 4. 启动示例执行器（samples，端口 8081）
 
@@ -159,6 +162,8 @@ curl -X POST http://localhost:8080/job/1/start
 | `job_info` | 任务 | handler_name、cron、route_strategy、block_strategy、retry_count、trigger_status、trigger_next_time、trigger_last_time |
 | `job_registry` | 在线执行器 | job_group_id、registry_value(IP:port)、heartbeat_time |
 | `job_log` | 执行日志 | job_id、executor_address、handler_name、trigger_type、trigger_time、handle_time、handle_code、handle_msg、status |
+| `job_lock` | 分布式锁 | lock_name（alert_lock 行，FOR UPDATE 抢锁）、description |
+| `job_alert_state` | 告警去重状态 | job_id、last_alert_at（10min 窗口去重） |
 
 ## 目录结构
 
@@ -191,7 +196,7 @@ ww-job/
 - [x] 执行日志
 - [x] 阻塞策略（SINGLE 互斥）/ 超时控制（超时不重试 + status=3 未知态）
 - [x] 分片广播
-- [ ] 调度中心集群（分布式锁）
+- [x] 调度中心集群（分布式锁）
 - [x] 前端控制台（`ww-job-web`，Vue3 + Element Plus，概览仪表盘 / 任务管理 / 执行日志 / 执行器在线列表 + Cron 可视化配置）
 
 ---
