@@ -6,8 +6,10 @@ import com.wwjob.admin.mapper.JobInfoMapper;
 import com.wwjob.admin.mapper.JobLogMapper;
 import com.wwjob.core.model.ReturnT;
 import com.wwjob.core.model.TriggerParam;
+import com.wwjob.core.util.CronUtil;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
 
 import java.net.SocketTimeoutException;
@@ -52,6 +54,25 @@ public class JobTriggerServiceImpl implements JobTriggerService {
         Long logId = jobDecisionService.decide(jobId, triggerType);
         if (logId == null) return;
         dispatch(logId, job, triggerType);
+    }
+
+    /** 触发点幂等：行锁内判断本次触发点是否已被别台分配，未分配则先推进 next_time 再放行 */
+    @Transactional
+    @Override
+    public boolean claimNextTime(long jobId, String cron) {
+        JobInfo job = jobInfoMapper.selectByIdForUpdate(jobId);
+        if (job == null || job.getTriggerStatus() == null || job.getTriggerStatus() != 1) {
+            return false;   //任务不存在或已停用
+        }
+        long now = System.currentTimeMillis();
+        Long lastNext = job.getTriggerNextTime();
+        if (lastNext == null || lastNext > now) {
+            return false;   // 已被别台 admin 推进，本次触发点已分配，跳过
+        }
+        long next = CronUtil.nextTime(cron, now);
+        job.setTriggerNextTime(next);
+        jobInfoMapper.updateById(job);
+        return true;
     }
 
     private void broadcast(JobInfo job, String triggerType) {
