@@ -170,6 +170,12 @@ ww-job-web/
 | 7 | 删除任务（popconfirm 确认） | 列表消失，`job_info` 中无该行 |
 | 8 | 分组筛选下拉 | 选某分组后列表只显示该组任务 |
 
+### 实测记录（2026-08-29）
+
+8 场景全过 ✅：列表加载、新建（默认停用 + 下次触发已算）、启用 + 触发、日志跳转带 jobId 预填、按状态筛选、failDemoHandler 触发显示 status=2「模拟业务失败」、编辑改 cron 下次触发刷新、删除（popconfirm）、分组筛选。
+
+另实测「handler 名填错」场景（表单填 `DemoHandler`，实际注册为 `demoHandler`）→ executor 返回「handler 未注册: DemoHandler」→ 日志正确落 status=2 失败，详情弹窗完整展示 handleCode=500 与错误消息——失败路径与错误消息展示均符合预期。
+
 ---
 
 ## 9. 非目标（本次不做）
