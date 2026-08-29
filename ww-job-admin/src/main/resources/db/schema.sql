@@ -58,3 +58,22 @@ CREATE TABLE IF NOT EXISTS job_log (
     KEY idx_job (job_id),
     KEY idx_create (create_time)
     ) COMMENT '执行日志';
+
+CREATE TABLE IF NOT EXISTS job_lock (
+                                        lock_name VARCHAR(64) PRIMARY KEY COMMENT '锁名',
+    description VARCHAR(128) COMMENT '锁用途说明',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) COMMENT '分布式锁';
+
+INSERT INTO job_lock (lock_name, description) VALUES ('alert_lock', '失败告警扫描互斥锁')
+    ON DUPLICATE KEY UPDATE lock_name = lock_name;
+
+CREATE TABLE IF NOT EXISTS job_alert_state (
+                                               id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                               job_id BIGINT NOT NULL COMMENT '任务id',
+                                               last_alert_at BIGINT NOT NULL DEFAULT 0 COMMENT '上次告警毫秒时间戳（10min 去重窗口）',
+                                               create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                               update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                               UNIQUE KEY uk_job (job_id)
+    ) COMMENT '任务告警去重状态';
