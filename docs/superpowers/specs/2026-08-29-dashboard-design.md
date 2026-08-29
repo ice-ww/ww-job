@@ -230,9 +230,11 @@ ww-job-web/
 | 5 | TOP 行「查看日志」 | → `/joblogs?jobId=N`（按任务筛选） |
 | 6 | `/` 首页重定向 | 浏览器开 `/` 落在 `/dashboard`，菜单「概览」高亮 |
 
-### 实测记录
+### 实测记录（2026-08-29）
 
-（待实现后回填）
+- **后端接口**：`GET /dashboard/stats` curl 实测返回完整 JSON——`jobTotal 14 / jobEnabled 0 / jobDisabled 14 / executorTotal 1 / executorOnline 1 / logTotalToday 7 / logSuccessToday 2 / logFailToday 5 / logUnknownToday 0 / failTop 4 条`（含 failDemoHandler 的 alert-fail-job 任务）。
+- **场景 1-6**（概览页加载数据与 DB 一致、触发 demoHandler 今日成功 +1、触发 failDemoHandler 今日失败 +1 且失败 TOP 出现、卡片点击跳转后 status/jobId 自动筛选、`/` 重定向 `/dashboard`）：用户端到端实测全部通过。
+- **包名修正**：DTO 初版落 `com.wwjob.admin.alarm.dto`（alarm 为失败告警域，语义不符），最终代码审查指出后挪至 `com.wwjob.admin.dto` 并同步三处 import（Controller / Service / JobLogMapper）。
 
 ---
 

@@ -145,6 +145,7 @@ curl -X POST http://localhost:8080/job/1/start
 | POST | `/job/{id}/stop` | 停止任务 |
 | GET | `/joblog/page?page=&size=&jobId=&status=` | 执行日志分页 |
 | GET | `/joblog/{id}` | 日志详情 |
+| GET | `/dashboard/stats` | 概览统计（任务/执行器/今日日志/失败 TOP） |
 | POST | `/registry` | 执行器注册 |
 | GET | `/registry/list` | 在线执行器列表 |
 | POST | `/heartbeat` | 执行器心跳 |
@@ -191,7 +192,7 @@ ww-job/
 - [x] 阻塞策略（SINGLE 互斥）/ 超时控制（超时不重试 + status=3 未知态）
 - [x] 分片广播
 - [ ] 调度中心集群（分布式锁）
-- [x] 前端控制台（`ww-job-web`，Vue3 + Element Plus，任务管理 / 执行日志 / 执行器在线列表 + Cron 可视化配置）
+- [x] 前端控制台（`ww-job-web`，Vue3 + Element Plus，概览仪表盘 / 任务管理 / 执行日志 / 执行器在线列表 + Cron 可视化配置）
 
 ---
 
