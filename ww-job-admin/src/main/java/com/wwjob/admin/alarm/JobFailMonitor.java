@@ -91,8 +91,10 @@ public class JobFailMonitor {
             st.setLastAlertAt(now);
             alertStateMapper.insert(st);
         } else {
-            st.setLastAlertAt(now);
-            alertStateMapper.updateById(st);
+            JobAlertState upd = new JobAlertState();
+            upd.setId(st.getId());      // 只带主键
+            upd.setLastAlertAt(now);    // 只带要改的字段
+            alertStateMapper.updateById(upd);
         }
     }
 
