@@ -250,11 +250,12 @@ private void upsertAlertState(long jobId, long now) {
 
 ## 9. 边界与已知局限（明确记录）
 
-1. **executor 仍连单 admin**：executor 心跳/注册只发一个 admin 地址；该 admin 宕机后 executor 不自动切换（xxl-job 的 admin 地址列表 + 失败切换为后续项）。但调度/注册数据在共享 DB，另一台 admin 仍能正常调度。
+1. ~~**executor 仍连单 admin**~~ **已解决（2026-08-30）**：executor 新增 `AdminAddressPool`，注册/心跳走广播容错、回调走故障切换（见 executor-admin-failover spec），任意一台 admin 宕机不影响执行。executor 侧不感知 admin 健康度、无主动探测，靠实际请求失败驱动切换，30s 心跳周期天然自愈。
 2. **手动触发无跨实例幂等**：用户对同一任务连点两次会触发两次（单 admin 亦然），属操作层面，非集群缺陷。
 3. **claimNextTime 只拦截 cron 触发**：`sharding` 广播走 `trigger()`（broadcast）不经 decide，但广播入口在 claimNextTime 之后，仍受同一触发点互斥保护。
 4. **时间轮多实例重复预读**：预读无副作用，只是多台各自入轮；实际触发由 claimNextTime 幂等拦截，浪费极少量内存/CPU，可接受。
 5. **MyBatis-Plus `updateById` 整行写回会屏蔽 `update_time` 自动更新**：对 `selectOne` 查出的完整实体改一个字段再 `updateById`，默认 NOT_NULL 策略把实体里所有非空字段（含旧 `update_time`）写进 SET 子句，`ON UPDATE CURRENT_TIMESTAMP` 不触发 → update_time 恒等于创建时间。`job_alert_state.upsertAlertState` 已改用"只构造 id + 变更字段"规避；`job_info` 的同类 update（claimNextTime / dispatch / scheduleIfNeeded）仍存在此现象，纯信息列失真、不影响业务正确性，后续可统一处理。
+6. **`ScheduleHelper` 时间轮调度偶发跳拍（既有，2026-08-30 实测确认）**：5s cron 任务的 job_log 时间线存在 50~70s 左右的规律性空档（如 00:49:10→00:50:10），单 admin 时代（08-29 21:17 起）同样存在，与双 admin / executor 故障切换无关；executor 收到 dispatch 数与 job_log 条数完全一致，确认跳拍发生在 admin 调度侧。疑似时间轮预读窗口（5s）与 DB 扫描频率（1s）在触发点恰好落在预读边界时的漏入轮，待后续排查。
 
 ---
 

@@ -265,7 +265,17 @@ public CallbackReporter callbackReporter(AdminAddressPool adminPool) {
 
 ### 实测记录
 
-（待实现后回填）
+> 实测日期：2026-08-30（T5 双 admin 端到端）。环境：admin 8080 + admin 8082 共用 MySQL，executor 8081 配置 `admin-addresses: http://localhost:8080,http://localhost:8082`，job 27「回归测试」cron `0/5 * * * * ?` 每 5s 触发。
+
+| # | 场景 | 实测结果 |
+| --- | --- | --- |
+| 1 | 双 admin + 多地址 executor 启动 | ✅ 两 admin 的 `/registry/list` 均返回同一行 `127.0.0.1:8081`（共享 job_registry 表），heartbeatTime 同步刷新 |
+| 2 | cron 任务跑 30s | ✅ executor 启动后 22 条 cron job_log 全部 status=1、handleTime 即时回填（回调正常落库） |
+| 3 | 杀 8080 | ✅ 三个信号齐备：(a) executor 日志出现 `broadcast failed: http://localhost:8080/registry -> Connection refused`（证明 8080 在列表、广播容错）；(b) 8082 registry heartbeatTime 持续刷新（心跳直达 8082）；(c) 经 8082 手动触发 job 27 → 新 job_log status=1（回调 failover 到 8082） |
+| 4 | 重启 8080 | ✅ 8080 恢复后下一心跳即成功（broadcast failed 计数停止增长），两 admin registry 均新鲜；job_log 无重复回调、id 连续递增 |
+| 5 | （可选）全杀 admin | 未测（3 次重试 + 巡检兜底为既有链路，未回归） |
+
+**附带发现（非本次故障切换引入）**：job 27 的 job_log 时间线存在规律性 60s 左右空档（如 00:49:10→00:50:10、00:53:55→00:55:05），且最早一批日志（T4 单 admin 时代，08-29 21:17 起）同样存在——属 `ScheduleHelper` 时间轮调度的既有跳拍现象，与 executor 多 admin 无关；executor 实际收到 dispatch 数与 job_log 条数完全一致（101=101），确认跳拍发生在 admin 调度侧而非执行/回调侧。已记入 multi-admin-cluster spec §9 局限。
 
 ---
 
