@@ -74,7 +74,7 @@ public class ScheduleHelper {
             } catch (Exception e) {
                 // 单次扫描异常不退出循环
             }
-            sleep(TICK_MS);
+            sleep();
         }
     }
 
@@ -86,7 +86,7 @@ public class ScheduleHelper {
         long next = job.getTriggerNextTime();
         if (next < now) {
             // 任务落后（如 admin 重启、上次推进失败）：直接跳到下一个未来触发点。
-            // 这样既不会立即补触发，也不会因 query 只查未来而永久失活
+            // 这样既不会立即补发触发，也不会因 query 只查未来而永久失活
             next = CronUtil.nextTime(job.getCron(), now);
             job.setTriggerNextTime(next);
             jobInfoMapper.updateById(job);
@@ -94,28 +94,14 @@ public class ScheduleHelper {
         long delay = Math.max(0, next - now);
         timeWheel.addTask(delay, () -> {
             try {
-                triggerService.trigger(job.getId(), "cron");
+                // 触发点幂等：行锁内先推进 next_time（标记本次已分配），返回 true 才真正触发
+                if (triggerService.claimNextTime(job.getId(), job.getCron())) {
+                    triggerService.trigger(job.getId(), "cron");
+                }
             } finally {
-                // 触发后推进下次触发时间，保证任务不会因 trigger_next_time 过期而失活
-                advanceNextTime(job.getId(), job.getCron());
                 scheduledJobIds.remove(job.getId());
             }
         });
-    }
-
-    /** 触发完成后，把下次触发时间算好写回 DB */
-    private void advanceNextTime(long jobId, String cron) {
-        try {
-            JobInfo job = jobInfoMapper.selectById(jobId);
-            if (job == null || job.getTriggerStatus() == null || job.getTriggerStatus() != 1) {
-                return;  // 任务被停用则不再推进，让它自然失活
-            }
-            long next = CronUtil.nextTime(cron, System.currentTimeMillis());
-            job.setTriggerNextTime(next);
-            jobInfoMapper.updateById(job);
-        } catch (Exception e) {
-            // 推进失败，下次扫描会重新调度
-        }
     }
 
     private void ringLoop() {
@@ -127,12 +113,12 @@ public class ScheduleHelper {
             } catch (Exception e) {
                 // 忽略单次异常
             }
-            sleep(TICK_MS);
+            sleep();
         }
     }
 
-    private void sleep(long ms) {
-        try { Thread.sleep(ms); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+    private void sleep() {
+        try { Thread.sleep(ScheduleHelper.TICK_MS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }
 
     @PreDestroy
