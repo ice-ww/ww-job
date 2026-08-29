@@ -40,8 +40,8 @@ public class ExecutorAutoConfiguration {
     }
 
     @Bean
-    public CallbackReporter callbackReporter(ExecutorProperties props) {
-        return new CallbackReporter(props);
+    public CallbackReporter callbackReporter(AdminAddressPool adminPool) {
+        return new CallbackReporter(adminPool);
     }
 
     @Bean
