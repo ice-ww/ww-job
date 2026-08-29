@@ -8,6 +8,7 @@
       <el-menu router :default-active="$route.path">
         <el-menu-item index="/jobs">任务管理</el-menu-item>
         <el-menu-item index="/joblogs">执行日志</el-menu-item>
+        <el-menu-item index="/registries">执行器列表</el-menu-item>
       </el-menu>
     </el-aside>
     <el-main class="main">
