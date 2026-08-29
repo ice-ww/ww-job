@@ -205,12 +205,12 @@ private void upsertAlertState(long jobId, long now) {
 
 ## 7. 联调与启动（双 admin 验证）
 
-1. **同库两实例**：admin(8080, local) + admin(8081, local，`--server.port=8081`) + executor(监听 8081，admin 地址仍配 8080) + `npm run dev`。
-   - 8081 实例启动命令（覆盖端口）：
+1. **同库两实例**：admin(8080, local) + admin(8082, local，`--server.port=8082`，**8081 被 executor 占用**) + executor(监听 8081，admin 地址仍配 8080) + `npm run dev`。
+   - 8082 实例启动命令（覆盖端口）：
      ```bash
-     mvn -pl ww-job-admin -am spring-boot:run -Dspring-boot.run.profiles=local -Dspring-boot.run.arguments=--server.port=8081
+     mvn -pl ww-job-admin -am spring-boot:run -Dspring-boot.run.profiles=local -Dspring-boot.run.arguments=--server.port=8082
      ```
-2. executor 只连 8080（默认配置），但 `job_registry` 在共享 DB，8081 同样能读到在线执行器。
+2. executor 只连 8080（默认配置），但 `job_registry` 在共享 DB，8082 同样能读到在线执行器。
 
 ---
 
