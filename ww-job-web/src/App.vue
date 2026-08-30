@@ -1,8 +1,22 @@
 <script setup>
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
+const username = localStorage.getItem('wwjob_username') || 'admin'
+
+const logout = () => {
+  localStorage.removeItem('wwjob_token')
+  localStorage.removeItem('wwjob_username')
+  router.push('/login')
+}
 </script>
 
 <template>
-  <el-container class="layout">
+  <!-- 登录页：全屏裸渲染，不套侧边栏布局 -->
+  <router-view v-if="$route.path === '/login'" />
+
+  <!-- 控制台：侧边栏布局 -->
+  <el-container v-else class="layout">
     <el-aside width="200px" class="aside">
       <div class="logo">ww-job</div>
       <el-menu router :default-active="$route.path">
@@ -13,6 +27,10 @@
       </el-menu>
     </el-aside>
     <el-main class="main">
+      <div class="topbar">
+        <span class="username">{{ username }}</span>
+        <el-button size="small" @click="logout">退出登录</el-button>
+      </div>
       <router-view />
     </el-main>
   </el-container>
@@ -24,4 +42,6 @@
 .aside .logo { height: 56px; line-height: 56px; text-align: center; font-size: 18px; font-weight: bold; color: #fff; }
 .aside :deep(.el-menu) { border-right: none; background: transparent; }
 .main { background: #f5f7fa; padding: 16px; }
+.topbar { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-bottom: 16px; }
+.username { color: #303133; font-size: 14px; }
 </style>
