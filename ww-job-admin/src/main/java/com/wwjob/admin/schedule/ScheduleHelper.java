@@ -92,7 +92,11 @@ public class ScheduleHelper {
             jobInfoMapper.updateById(job);
         }
         long delay = Math.max(0, next - now);
-        timeWheel.addTask(delay, () -> {
+        // 时间轮按 ~1010ms 粗粒度推进，任务实际触发 = 上次推进时刻 + delayTicks×实际节拍，
+        // 可能比目标边界提前最多一个 tick。提前到边界前会被 claimNextTime 拒绝，
+        // catch-up 推进后仍提前 → 拒绝死循环（即跳拍）。+TICK_MS 使 delayTicks=ceil(delay/1000)+1，
+        // 数学上保证 触发时刻 ≥ 边界（永不提前），至多晚一个 tick。
+        timeWheel.addTask(delay + TICK_MS, () -> {
             try {
                 // 触发点幂等：行锁内先推进 next_time（标记本次已分配），返回 true 才真正触发
                 if (triggerService.claimNextTime(job.getId(), job.getCron())) {

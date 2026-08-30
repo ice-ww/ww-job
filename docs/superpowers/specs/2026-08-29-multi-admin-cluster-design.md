@@ -255,7 +255,11 @@ private void upsertAlertState(long jobId, long now) {
 3. **claimNextTime 只拦截 cron 触发**：`sharding` 广播走 `trigger()`（broadcast）不经 decide，但广播入口在 claimNextTime 之后，仍受同一触发点互斥保护。
 4. **时间轮多实例重复预读**：预读无副作用，只是多台各自入轮；实际触发由 claimNextTime 幂等拦截，浪费极少量内存/CPU，可接受。
 5. **MyBatis-Plus `updateById` 整行写回会屏蔽 `update_time` 自动更新**：对 `selectOne` 查出的完整实体改一个字段再 `updateById`，默认 NOT_NULL 策略把实体里所有非空字段（含旧 `update_time`）写进 SET 子句，`ON UPDATE CURRENT_TIMESTAMP` 不触发 → update_time 恒等于创建时间。`job_alert_state.upsertAlertState` 已改用"只构造 id + 变更字段"规避；`job_info` 的同类 update（claimNextTime / dispatch / scheduleIfNeeded）仍存在此现象，纯信息列失真、不影响业务正确性，后续可统一处理。
-6. **`ScheduleHelper` 时间轮调度偶发跳拍（既有，2026-08-30 实测确认）**：5s cron 任务的 job_log 时间线存在 50~70s 左右的规律性空档（如 00:49:10→00:50:10），单 admin 时代（08-29 21:17 起）同样存在，与双 admin / executor 故障切换无关；executor 收到 dispatch 数与 job_log 条数完全一致，确认跳拍发生在 admin 调度侧。疑似时间轮预读窗口（5s）与 DB 扫描频率（1s）在触发点恰好落在预读边界时的漏入轮，待后续排查。
+6. **`ScheduleHelper` 时间轮调度偶发跳拍（既有，2026-08-30 已定位并修复）**：5s cron 任务的 job_log 时间线存在 50~70s 左右的规律性空档（如 00:49:10→00:50:10），单 admin 时代（08-29 21:17 起）同样存在，与双 admin / executor 故障切换无关；executor 收到 dispatch 数与 job_log 条数完全一致，确认跳拍发生在 admin 调度侧。
+   - **根因（2026-08-30 live general_log 证据链确认）**：时间轮 `addTask(delay)` 计算 `delayTicks = ceil(delayMs / tickDurationMs)`，把任务放到当前槽往前 delayTicks 格，实际触发时刻 = `上次推进时刻 + delayTicks × 实际节拍(~1010ms)`。由于入轮时刻可落在轮盘周期任意相位（距上次推进 0~1010ms），实际触发可比目标边界**提前最多 ~1 tick**。提前触发（claim < 边界）→ `claimNextTime` 的 `lastNext > now` 拒绝且不推进 → `scheduleLoop` 的 catch-up 把 next 推进到下一 5s 边界并重新入轮 → 新任务仍提前触发 → 拒绝死循环（实测 9 连拒、job 停摆 ~45s）。相位漂移（轮盘 5 格 = 5×1010.6ms = 5053ms ≠ 5000ms，每周期 +53ms）使触发点相对边界从 −533ms 爬到 +886ms 越过 0，停滞/健康间歇交替 → 表现为偶发。
+   - **修复（方案 B，2026-08-30）**：`ScheduleHelper` 入轮改 `addTask(delay + TICK_MS)` → `delayTicks = ceil(delay/1000)+1` → `触发 − 边界 ≥ −1010 + 1010 + 0.01×delay ≥ 0`，数学上保证永不提前。代价是每次触发最多晚一个 tick（~1s），对秒级 cron 可接受。
+   - **验证（2026-08-30，双 admin 下实测）**：job 27 每分钟 job_log 稳定 12 条（修复前 2/3/6/7 条）；general_log 251 次 claim 中 109 次接受，逐条解析 `trigger_next_time` 反推真实边界，off（触发 − 边界）全部 ≥ 0（+97~+1533ms），无提前触发；连续拒绝最大长度 2（双 admin 幂等去重的正常交错形态，非旧 bug 的 7~9 连拒）。
+7. **触发延迟随修复上移**：方案 B 使 cron 触发恒落在边界之后（实测平均晚 ~780ms，最大 ~1.5s），`trigger_last_time` 的"准点"语义让位于"绝不提前"。对依赖准点触发的场景需评估。
 
 ---
 
