@@ -28,4 +28,8 @@ spring:
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
+wwjob:
+  auth:
+    jwt-secret: wwjob-dev-secret-please-override-2026   # 开发默认，生产在 application-local.yml 覆盖
+    jwt-expire-seconds: 86400                            # token 有效期 24h
 

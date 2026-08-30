@@ -77,3 +77,19 @@ CREATE TABLE IF NOT EXISTS job_alert_state (
                                                update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                                                UNIQUE KEY uk_job (job_id)
     ) COMMENT '任务告警去重状态';
+
+CREATE TABLE IF NOT EXISTS sys_user (
+                                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                        username   VARCHAR(64)  NOT NULL COMMENT '登录名',
+    password_hash VARCHAR(100) NOT NULL COMMENT 'BCrypt 哈希',
+    role       VARCHAR(32)  DEFAULT 'admin' COMMENT '角色（预留）',
+    status     TINYINT      DEFAULT 1 COMMENT '1启用 0禁用',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_username (username)
+    ) COMMENT '控制台用户';
+
+-- 种子管理员：admin / admin123（BCrypt 哈希固定串，幂等）
+INSERT INTO sys_user (username, password_hash, role, status)
+VALUES ('admin', '$2a$12$.0u57V.dCzQl3y0mIIAiZ.eELULXVyHjIqpf4YeurZvWianqnk9X.', 'admin', 1)
+    ON DUPLICATE KEY UPDATE username = username;
