@@ -17,6 +17,7 @@
 - **路由策略**：轮询（round）/ 随机（random）/ 故障转移（failover）
 - **执行日志**：每笔触发落库，支持按任务 / 状态分页查询
 - **任务分组**：按 appName 分组管理执行器与任务
+- **控制台登录鉴权**：管理 API 全部要求 JWT 登录态（自研 HMAC-SHA256 JWT + BCrypt 密码哈希），未登录返回 401；executor 机器间调用（注册 / 心跳 / 回调）自动放行不受影响；前端含登录页 + 路由守卫
 
 ## 架构
 
@@ -65,7 +66,7 @@
 
 | 模块 | 说明 |
 | --- | --- |
-| **ww-job-core** | 共享内核：`ReturnT` 统一返回、`TriggerParam`/`RegistryParam` 通信 DTO、`IJobHandler` + `@JobHandler` 注解、时间轮 `TimeWheel`、`CronUtil`（cron 下次触发时间）、路由策略（轮询/随机/故障转移） |
+| **ww-job-core** | 共享内核：`ReturnT` 统一返回、`TriggerParam`/`RegistryParam` 通信 DTO、`IJobHandler` + `@JobHandler` 注解、时间轮 `TimeWheel`、`CronUtil`（cron 下次触发时间）、路由策略（轮询/随机/故障转移）、`JwtUtil`（自研 HMAC-SHA256 JWT） |
 | **ww-job-executor** | 执行器库：自动配置（配置了 `wwjob.executor.app-name` 即自动启用）、注册中心客户端（注册 + 心跳）、`JobHandlerRegistry` 处理器注册表、`/run` 任务执行入口。业务方引入依赖并实现 `IJobHandler` 即可接入 |
 | **ww-job-admin** | 调度中心：REST API（任务 / 分组 / 日志 / 注册中心）、DB 预读调度线程 + 时间轮、触发分发（路由 + 重试）、执行日志、下线清理 |
 | **ww-job-executor-samples** | 示例执行器：`appName = sample-executor`，内含 `demoHandler` 示例 |
@@ -114,30 +115,42 @@ mvn -pl ww-job-executor-samples -am spring-boot:run
 
 ### 5. 验证
 
-```bash
-# 查看执行器分组（应能看到 sample-executor）
-curl http://localhost:8080/jobgroup/list
+> 管理 API 全部需要登录态。默认账号 **admin / admin123**（BCrypt 种子在 `sys_user` 表，仅演示用途）。
+> 先登录拿 token，之后请求带 `Authorization: Bearer <token>`；executor 的注册 / 心跳 / 回调路径不受此限制。
 
-# 创建任务：cron 每 5 秒触发，handler 指向 demoHandler，blockStrategy=SINGLE（重叠丢弃）
+```bash
+# ① 登录拿 token（复制输出里 data.token）
+curl -X POST http://localhost:8080/auth/login -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}'
+
+# ② 把 token 填进下面的变量，后续命令自动带鉴权头
+TOKEN="<①输出的 token>"
+AUTH="Authorization: Bearer $TOKEN"
+
+# ③ 查看执行器分组（应能看到 sample-executor）
+curl -H "$AUTH" http://localhost:8080/jobgroup/list
+
+# ④ 创建任务：cron 每 5 秒触发，handler 指向 demoHandler，blockStrategy=SINGLE（重叠丢弃）
 curl -X POST http://localhost:8080/job \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H "$AUTH" \
   -d '{"jobGroupId":1,"handlerName":"demoHandler","cron":"0/5 * * * * ?","routeStrategy":"round","retryCount":0,"blockStrategy":"SINGLE","triggerStatus":1}'
 
-# 查看执行日志（应每 5 秒新增一条成功记录）
-curl "http://localhost:8080/joblog/page?size=5"
+# ⑤ 查看执行日志（应每 5 秒新增一条成功记录）
+curl -H "$AUTH" "http://localhost:8080/joblog/page?size=5"
 
-# 手动触发一次（triggerType=manual）
-curl -X POST http://localhost:8080/job/1/trigger
+# ⑥ 手动触发一次（triggerType=manual）
+curl -X POST -H "$AUTH" http://localhost:8080/job/1/trigger
 
-# 停止 / 启动任务
-curl -X POST http://localhost:8080/job/1/stop
-curl -X POST http://localhost:8080/job/1/start
+# ⑦ 停止 / 启动任务
+curl -X POST -H "$AUTH" http://localhost:8080/job/1/stop
+curl -X POST -H "$AUTH" http://localhost:8080/job/1/start
 ```
 
 ## REST API
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
+| POST | `/auth/login` | 登录（body: {username, password}），返回 {token, username, role} |
 | POST | `/jobgroup` | 创建执行器分组 |
 | GET | `/jobgroup/list` | 分组列表 |
 | POST | `/job` | 创建任务 |
@@ -164,6 +177,7 @@ curl -X POST http://localhost:8080/job/1/start
 | `job_log` | 执行日志 | job_id、executor_address、handler_name、trigger_type、trigger_time、handle_time、handle_code、handle_msg、status |
 | `job_lock` | 分布式锁 | lock_name（alert_lock 行，FOR UPDATE 抢锁）、description |
 | `job_alert_state` | 告警去重状态 | job_id、last_alert_at（10min 窗口去重） |
+| `sys_user` | 控制台用户 | username、password_hash（BCrypt）、role、status |
 
 ## 目录结构
 
