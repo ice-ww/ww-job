@@ -405,7 +405,7 @@ A 重启（tools/launch_adminA.cmd，新 PID 26048）后最终 env 核验曾见 
 | 缺陷 | 状态 |
 | --- | --- |
 | P0-1/2/3：TimeWheel 线程安全、触发无超时阻塞、路由策略失效（早期审查） | 已修复 |
-| F2-9：高负载下 stop 被 in-flight 触发旧实体 `updateById` 整写回「复活」 | 已修复（写回收敛，`triggerStatus` 不再被旧对象覆盖） |
+| F2-9：高负载下 stop 被 in-flight 触发旧实体 `updateById` 整写回「复活」 | **未修复（待办）**：无 fix 提交；`JobTriggerServiceImpl.java:75/131/183` 仍整实体 `updateById` 写回；F6-2 修复后 P8b/P9/P10 drain 仍复现复活 36/40/58 个 |
 | F6-2：claimNextTime 秒边界竞态 → 同秒双 claim（非 SINGLE 任务 = 毫秒级连发两次的真实重复执行风险） | 已修复 commit 44e0b16，决定性 SQL=0 |
 | F4-3：告警对空 alarmConfig 完全静默 | 产品建议，未改（需产品决策） |
 
