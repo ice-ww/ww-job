@@ -1,0 +1,16 @@
+# 压测专用配置（指向 docker 容器里的独立压测库 ww_job_loadtest，端口 3307）
+# 启动 admin 时激活 loadtest profile：
+#   mvn -pl ww-job-admin spring-boot:run -Dspring-boot.run.profiles=loadtest
+# 或 IDE 启动参数加：--spring.profiles.active=loadtest
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3307/ww_job_loadtest?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: root
+    password: root
+    # A/B 验证 F2-8（已定论）：池 10→30，D=300 密度 120→150/s（+25%），池墙坐实。
+    # 但池 30 后新墙=触发线程池 24（ScheduleHelper 硬编码，不可配置），24/24 RUNNABLE。
+    # 保持 30 供后续"线程池可配化"再测；如需复现 pool=10 基线，改回默认即可。
+    # 见 docs/load-test-results.md F2-8/F2-10/P4b 档
+    hikari:
+      maximum-pool-size: 30
+      minimum-idle: 5
