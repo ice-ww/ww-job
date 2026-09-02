@@ -66,14 +66,29 @@ public class JobTriggerServiceImpl implements JobTriggerService {
         }
         long now = System.currentTimeMillis();
         Long lastNext = job.getTriggerNextTime();
-        if (lastNext == null || lastNext > now) {
-            return false;   // 已被别台 admin 推进，本次触发点已分配，跳过
+        if (!claimable(lastNext, now)) {
+            return false;   // 已被别台推进 / 触发点边界秒尚未整体过去
         }
+
         long next = CronUtil.nextTime(cron, now);
         job.setTriggerNextTime(next);
         jobInfoMapper.updateById(job);
         return true;
     }
+
+    /**
+     * 触发点是否已可 claim：next_time 恒为秒边界（CronUtil 秒精度），毫秒级 now 直接比
+     * 会在边界秒翻过时误放行相邻点（败者 A 推到 10:47:04.000、败者 B 在 10:47:04.001 读到
+     * 10:47:04.000 > 10:47:04.001 为假 → 误 claim → 同秒双触发，F6-2）。
+     * 截断到秒：边界秒整体过去（nowSec > lastNext）才放行，杜绝同秒双 claim；正常时间轮
+     * 触发恒在 next+1s，nowSec 必大于边界，不受影响。
+     */
+    static boolean claimable(Long lastNext, long now) {
+        if (lastNext == null) return false;
+        long nowSec = now - (now % 1000);
+        return lastNext < nowSec;
+    }
+
 
     private void broadcast(JobInfo job, String triggerType) {
         List<String> addresses = routerService.onlineAddresses(job.getJobGroupId());

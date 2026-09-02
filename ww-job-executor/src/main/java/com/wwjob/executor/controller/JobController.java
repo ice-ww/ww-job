@@ -32,21 +32,21 @@ public class JobController {
 
     @PostMapping("/run")
     public ReturnT<String> run(@RequestBody TriggerParam param) {
-        IJobHandler handler = registry.get(param.getHandler());
+        IJobHandler handler = registry.get(param.getHandler());  //1.找处理器
         if (handler == null) {
             return ReturnT.fail("handler 未注册: " + param.getHandler());
         }
-        JobContext ctx = new JobContext();
+        JobContext ctx = new JobContext();             //2.组装上下文
         ctx.setJobId(param.getJobId());
         ctx.setLogId(param.getLogId());
         ctx.setExecutorParam(param.getExecutorParam());
         ctx.setShardIndex(param.getShardIndex());
         ctx.setShardTotal(param.getShardTotal());
         try {
-            jobExecutor.execute(new JobRunner(handler, ctx, callbackReporter));
-            return ReturnT.success();
+            jobExecutor.execute(new JobRunner(handler, ctx, callbackReporter));  //3.异步执行
+            return ReturnT.success();                  //4.立刻ack
         } catch (RejectedExecutionException e) {
-            return ReturnT.fail("执行器繁忙，请稍后");
+            return ReturnT.fail("执行器繁忙，请稍后");   //5.队列满（线程池采用直接拒绝策略）
         }
     }
 }
