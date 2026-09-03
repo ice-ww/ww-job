@@ -239,10 +239,10 @@ P9 三零（status3/泄漏/FGC）+ 连接/堆有界，可长时间跑。
 - **验证**：确定性复现 `tools/repro_f29.py`（stall 地址把写回窗口拉长到 read 超时 10s）修复前 REVIVED/exit 1 → 修复后 stopped/exit 0；demoHandler ack-success 回归 `trigger_last_time` 正常推进、`trigger_status` 保持 1、job_log SUCCESS。
 - **后续可选**：高负载 drain（D=300）复核复活=0（见 §7-G1）；stop 接口仍无条件 success()（见 R2）。
 
-**R2. stop 接口静默失败（待办——R1 修复时未覆盖此点）**
-- 问题：`/stop` 无条件置 0 且永远返回 success()，响应码无法检出真实失败；loadgen stop 曾静默漏停 1 个任务（F2-4）。
-- 修法：stop 按实际影响行数/状态返回，前端可感知"该任务本来就没在跑"或失败。
-- **预期收益**：运维/自动化可校验 stop 结果，避免静默状态错乱。
+**R2. stop/start 接口语义化：幂等 + 区分状态 —— ✅ 已修复（commit 1617d9d）**
+- 问题：`/stop` 无条件置 0 且永远返回 success()，响应码无法检出真实失败（loadgen stop 曾静默漏停 1 个任务，F2-4）；对不存在任务直接 NPE → HTTP 500；start 无对称实现。
+- 修复：`JobInfoMapper.stopById/startById` 条件 UPDATE（`WHERE trigger_status=1/0`），返回行数区分「本次真转变」vs「已是目标态」（只动目标列，同 F2-9 防覆盖思路）；`JobController.start/stop` 先 `selectById` 判 null → fail「任务不存在」；前端 `JobList.vue onToggle` 读 `ReturnT.code/msg` 提示真实结果。
+- **验证**：curl 六场景断言全绿——job 不存在 → 500「任务不存在」；运行中 stop → 200「已停止」；已停再 stop → 200「任务已处于停止状态」；已停 start → 200「已启动」；运行中再 start → 200「任务已处于运行状态」；前端浏览器手测通过。
 
 ### 🥈 第二优先级：性能杠杆（写放大是核心，改造收益最大）
 
