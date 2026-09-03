@@ -23,11 +23,11 @@ public interface JobLogMapper extends BaseMapper<JobLog> {
           FROM job_log l
           JOIN job_info j ON l.job_id = j.id
           WHERE l.status = 0
-            AND l.trigger_time < NOW() - INTERVAL (CASE 
+            AND l.trigger_time < #{now} - INTERVAL (CASE 
               WHEN j.timeout IS NULL OR j.timeout = 0 THEN 60
               ELSE j.timeout END) SECOND 
           """)
-    List<Long> selectTimeoutLogIds();
+    List<Long> selectTimeoutLogIds(@Param("now") LocalDateTime now);
 
     @Select("SELECT l.* FROM job_log l WHERE l.status IN (2, 3) AND l.handle_time >= #{from}")
     List<JobLog> selectRecentlyFailed(@Param("from") LocalDateTime from);

@@ -24,8 +24,9 @@ public class JobLogTimeoutScanner {
 
     @Scheduled(fixedRate = 30000)
     public void scan() {
-        List<Long> timeoutLogIds = jobLogMapper.selectTimeoutLogIds();
-        LocalDateTime now = LocalDateTime.now();   // ← 循环外，一次
+        // 「现在」与写 trigger_time 同用 JVM 时钟：now 作参数传 SQL，避免 NOW() 随 DB 会话时区错位
+        LocalDateTime now = LocalDateTime.now();
+        List<Long> timeoutLogIds = jobLogMapper.selectTimeoutLogIds(now);
         for (Long logId : timeoutLogIds) {
             jobLogMapper.update(null, new UpdateWrapper<JobLog>()
                     .eq("id", logId)
