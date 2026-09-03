@@ -8,7 +8,7 @@
 
 ## 0. 一句话摘要
 
-ww-job 在连续 11 档负载（P1~P11）下验证了**正确性红线全绿**（触发不丢、不重、SINGLE 防重叠、admin/executor 宕机不悬空），并坐实了一条**清晰的性能瓶颈链**：每触发 1 次任务要写 3 次独立事务、约 10 次 DB 往返（调度写放大），这个放大倍数让 binlog fsync → redo-log fsync → 连接池 → 触发线程池 → 共享 DB 行锁**轮番当墙**，单 admin 快任务吞吐封顶 ~150/s，双 admin 不扩展（~142/s）。慢任务是另一类独立的墙（执行器 24 线程 ÷ 任务时长 ≈ 12/s）。测试还挖出并验证修复了 1 个真实竞态缺陷（F6-2），另确认 1 个缺陷**仍待修**（F2-9 stop 复活）。
+ww-job 在连续 11 档负载（P1~P11）下验证了**正确性红线全绿**（触发不丢、不重、SINGLE 防重叠、admin/executor 宕机不悬空），并坐实了一条**清晰的性能瓶颈链**：每触发 1 次任务要写 3 次独立事务、约 10 次 DB 往返（调度写放大），这个放大倍数让 binlog fsync → redo-log fsync → 连接池 → 触发线程池 → 共享 DB 行锁**轮番当墙**，单 admin 快任务吞吐封顶 ~150/s，双 admin 不扩展（~142/s）。慢任务是另一类独立的墙（执行器 24 线程 ÷ 任务时长 ≈ 12/s）。测试还挖出并验证修复了 2 个真实竞态缺陷：**F6-2**（同秒双 claim）与 **F2-9**（stop 被 in-flight 整实体写回「复活」，commit 1f0b7f2）。
 
 ---
 
@@ -231,14 +231,15 @@ P9 三零（status3/泄漏/FGC）+ 连接/堆有界，可长时间跑。
 
 ## 6. 优化方向（按优先级，附预期收益）
 
-### 🥇 第一优先级：可靠性缺陷（建议先修）
+### 🥇 第一优先级：可靠性缺陷
 
-**R1. 修复 F2-9 stop「复活」（当前未修复，压测 drain 反复现）**
+**R1. 修复 F2-9 stop「复活」—— ✅ 已修复（commit 1f0b7f2）**
 - 问题：高负载下 `/job/{id}/stop` 置 triggerStatus=0 后，in-flight 触发用 `trigger()` 早期加载的旧实体整写回 `updateById(job)`（`JobTriggerServiceImpl.java:75/131/183`），把 stop 覆盖回 1 → 任务复活。实测档间清理 iter2 仍见 25~58 个复活。
-- 修法：写回改为只更新目标列（`LambdaUpdateWrapper` / `UpdateWrapper`，杜绝整实体覆盖），或加 `UPDATE ... WHERE id=? AND trigger_status=1` 条件让 stop 后的写回 0 行落空。
-- **预期收益**：stop 语义可靠，消除"已停任务继续跑"的操作事故与压测清理成本（档间不用再循环验到 0）；代码改动小、风险低。
+- 修复：新增 `JobInfoMapper.touchLastTime`（`UPDATE job_info SET trigger_last_time=#{lastTime} WHERE id=#{id}`），替换 dispatchOne ack 成功与 dispatch 超时/失败 tail 两处整实体写回——只更新目标列，杜绝覆盖 `trigger_status`。75 行 `claimNextTime` FOR UPDATE 锁内写回保留（无并发 /stop 竞态）。
+- **验证**：确定性复现 `tools/repro_f29.py`（stall 地址把写回窗口拉长到 read 超时 10s）修复前 REVIVED/exit 1 → 修复后 stopped/exit 0；demoHandler ack-success 回归 `trigger_last_time` 正常推进、`trigger_status` 保持 1、job_log SUCCESS。
+- **后续可选**：高负载 drain（D=300）复核复活=0（见 §7-G1）；stop 接口仍无条件 success()（见 R2）。
 
-**R2. stop 接口静默失败（顺带 R1 处理）**
+**R2. stop 接口静默失败（待办——R1 修复时未覆盖此点）**
 - 问题：`/stop` 无条件置 0 且永远返回 success()，响应码无法检出真实失败；loadgen stop 曾静默漏停 1 个任务（F2-4）。
 - 修法：stop 按实际影响行数/状态返回，前端可感知"该任务本来就没在跑"或失败。
 - **预期收益**：运维/自动化可校验 stop 结果，避免静默状态错乱。
@@ -292,7 +293,7 @@ P9 三零（status3/泄漏/FGC）+ 连接/堆有界，可长时间跑。
 
 | # | 缺口 | 目的 | 建议方案 |
 | --- | --- | --- | --- |
-| G1 | **F2-9 修复后复测** | 验证 stop 可靠率归零 | R1 修复后跑一档 D=300，drain iter1 期望 = 0 复活 |
+| G1 | **F2-9 高负载 drain 复核** | 确认高负载下 stop 可靠率归零（修复已在确定性层面验证） | commit 1f0b7f2 后跑一档 D=300，drain iter1 期望 = 0 复活；确定性复现 `tools/repro_f29.py` 已绿（stopped/exit 0） |
 | G2 | **触发池放大后的下一道墙** | 量化 P2 收益上限 | 触发池 24→48/64（配置化后）跑 D=300 A/B，找新墙（CPU？MySQL？）并测对应吞吐 |
 | G3 | **非 SINGLE 任务的重复执行边界** | 确认 F6-2 修复对非 SINGLE 同样安全 | 建一批 blockStrategy 非 SINGLE 的任务跑饱和档，决定性 SQL 扫同秒/邻近秒双执行 |
 | G4 | **ack 后 executor 崩溃的巡检闭环** | 补齐 F9 唯一未覆盖路径 | 时区一致的部署环境：kill executor 前先触发慢任务（受理后死），验 60s 内被收 status=3 |
@@ -311,7 +312,7 @@ P9 三零（status3/泄漏/FGC）+ 连接/堆有界，可长时间跑。
 | --- | --- | --- |
 | F1-1/1-3 | P99 秒精度 = 调度延迟上界，非执行耗时 | 口径 |
 | F2-1/2-2/2-6/2-8 | 瓶颈链四道墙（binlog fsync → redo fsync → 连接池 → 触发线程池），统一根因=写放大 | 结论 |
-| F2-9 | stop 被 in-flight 整实体写回复活 | **待修（R1）** |
+| F2-9 | stop 被 in-flight 整实体写回复活 | **已修复 1f0b7f2，确定性验证 0 复活** |
 | F2-10 / F3-2 | 高密度下 SINGLE 防重产生 status=3（0.6% / 13%） | 设计行为，需可见化（C2） |
 | F3-1 | 执行器线程池 = 慢任务墙（24÷T，与 D 无关） | 结论 |
 | F4-1/4-2 | 共享池队头阻塞（-33%）、cross-second 指标 | 结论（C1） |

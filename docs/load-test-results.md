@@ -405,7 +405,7 @@ A 重启（tools/launch_adminA.cmd，新 PID 26048）后最终 env 核验曾见 
 | 缺陷 | 状态 |
 | --- | --- |
 | P0-1/2/3：TimeWheel 线程安全、触发无超时阻塞、路由策略失效（早期审查） | 已修复 |
-| F2-9：高负载下 stop 被 in-flight 触发旧实体 `updateById` 整写回「复活」 | **未修复（待办）**：无 fix 提交；`JobTriggerServiceImpl.java:75/131/183` 仍整实体 `updateById` 写回；F6-2 修复后 P8b/P9/P10 drain 仍复现复活 36/40/58 个 |
+| F2-9：高负载下 stop 被 in-flight 触发旧实体 `updateById` 整写回「复活」 | **已修复 commit 1f0b7f2**：`JobTriggerServiceImpl` 的 dispatchOne ack 成功 + dispatch 超时/失败 tail 两处整实体 `updateById(job)` 收敛为新增 `JobInfoMapper.touchLastTime` 精确只更新 `trigger_last_time` 列；75 行 `claimNextTime` FOR UPDATE 锁内写回保留。确定性复现（`tools/repro_f29.py`，stall 超时窗口拉长到 10s）：修复前 REVIVED/exit 1 → 修复后 stopped/exit 0；demoHandler ack-success 回归：`trigger_last_time` 正常推进、`trigger_status` 保持 1、job_log SUCCESS |
 | F6-2：claimNextTime 秒边界竞态 → 同秒双 claim（非 SINGLE 任务 = 毫秒级连发两次的真实重复执行风险） | 已修复 commit 44e0b16，决定性 SQL=0 |
 | F4-3：告警对空 alarmConfig 完全静默 | 产品建议，未改（需产品决策） |
 
@@ -415,7 +415,7 @@ A 重启（tools/launch_adminA.cmd，新 PID 26048）后最终 env 核验曾见 
 - **时区对齐**：MySQL 容器 UTC vs 应用上海 +8h，所有时间过滤必须 `DATE_ADD(UTC_TIMESTAMP(), INTERVAL 8 HOUR)` 显式对齐（F1-2/F8-4）。
 - **分页漂移**：负载进行中 OFFSET 分页拉数虚高 19-21% → 窗口统计必须 drain 冻结后跑（F4-4）。
 - **单变量 A/B**：环境性墙（fsync）用单变量翻转确认根因，不拿笼统默认值当结论（F2-2）。
-- **stop 不可靠**：档间清理必须循环「停全量→等 5s→重扫验 0」收敛（F2-9）。
+- **stop 不可靠（F2-9 修复前）**：F2-9 未修时档间清理必须循环「停全量→等 5s→重扫验 0」收敛；commit 1f0b7f2 修复后 stop 单次即可靠，此循环仅作双保险保留。
 - **.cmd 编码**：Windows 批处理脚本避免中文/全角括号（GBK 误解析，Phase 9 教训）。
 
 ### 4.9 容量参考（单机、未调优、仅供参考）
