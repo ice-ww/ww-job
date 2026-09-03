@@ -9,6 +9,7 @@ import com.wwjob.core.router.RoundRobinRouter;
 import com.wwjob.core.router.Router;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -40,9 +41,12 @@ public class ExecutorRouterService {
     }
 
     public List<String> onlineAddresses(long jobGroupId) {
+        LocalDateTime threshold = LocalDateTime.now().minusSeconds(JobRegistry.ONLINE_SECONDS);
         return registryMapper.selectList(new QueryWrapper<JobRegistry>()
-                        .eq("job_group_id", jobGroupId))
+                        .eq("job_group_id", jobGroupId)
+                        .ge("heartbeat_time", threshold))
                 .stream().map(JobRegistry::getRegistryValue)
                 .collect(Collectors.toList());
     }
+
 }

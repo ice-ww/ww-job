@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS job_group (
-                                         id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                                         app_name VARCHAR(64) NOT NULL COMMENT '执行器标识',
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    app_name VARCHAR(64) NOT NULL COMMENT '执行器标识',
     title VARCHAR(64) NOT NULL COMMENT '名称',
     address_type TINYINT DEFAULT 0 COMMENT '0自动注册 1手动',
     address_list VARCHAR(512) COMMENT '手动地址列表，逗号分隔',
@@ -10,9 +10,9 @@ CREATE TABLE IF NOT EXISTS job_group (
     ) COMMENT '执行器分组';
 
 CREATE TABLE IF NOT EXISTS job_info (
-                                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                                        job_group_id BIGINT NOT NULL COMMENT '执行器分组id',
-                                        job_name VARCHAR(64) NOT NULL COMMENT '任务名',
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    job_group_id BIGINT NOT NULL COMMENT '执行器分组id',
+    job_name VARCHAR(64) NOT NULL COMMENT '任务名',
     job_desc VARCHAR(255) COMMENT '描述',
     handler_name VARCHAR(64) NOT NULL COMMENT 'JobHandler 名',
     executor_param VARCHAR(512) COMMENT '任务参数',
@@ -32,20 +32,21 @@ CREATE TABLE IF NOT EXISTS job_info (
     ) COMMENT '任务';
 
 CREATE TABLE IF NOT EXISTS job_registry (
-                                            id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                                            job_group_id BIGINT NOT NULL,
-                                            registry_key VARCHAR(64) NOT NULL COMMENT 'appName',
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    job_group_id BIGINT NOT NULL,
+    registry_key VARCHAR(64) NOT NULL COMMENT 'appName',
     registry_value VARCHAR(128) NOT NULL COMMENT 'ip:port',
     heartbeat_time DATETIME DEFAULT CURRENT_TIMESTAMP,
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_group_value (job_group_id, registry_value),
     KEY idx_key_time (registry_key, heartbeat_time)
-    ) COMMENT '执行器注册表';
+) COMMENT '执行器注册表';
 
 CREATE TABLE IF NOT EXISTS job_log (
-                                       id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                                       job_id BIGINT NOT NULL,
-                                       job_group_id BIGINT NOT NULL,
-                                       executor_address VARCHAR(128) COMMENT '执行地址',
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    job_id BIGINT NOT NULL,
+    job_group_id BIGINT NOT NULL,
+    executor_address VARCHAR(128) COMMENT '执行地址',
     handler_name VARCHAR(64),
     trigger_type VARCHAR(16) COMMENT 'cron/manual/retry',
     trigger_time DATETIME COMMENT '触发时间',
@@ -70,17 +71,17 @@ INSERT INTO job_lock (lock_name, description) VALUES ('alert_lock', '失败告�
     ON DUPLICATE KEY UPDATE lock_name = lock_name;
 
 CREATE TABLE IF NOT EXISTS job_alert_state (
-                                               id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                                               job_id BIGINT NOT NULL COMMENT '任务id',
-                                               last_alert_at BIGINT NOT NULL DEFAULT 0 COMMENT '上次告警毫秒时间戳（10min 去重窗口）',
-                                               create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-                                               update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                                               UNIQUE KEY uk_job (job_id)
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    job_id BIGINT NOT NULL COMMENT '任务id',
+    last_alert_at BIGINT NOT NULL DEFAULT 0 COMMENT '上次告警毫秒时间戳（10min 去重窗口）',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_job (job_id)
     ) COMMENT '任务告警去重状态';
 
 CREATE TABLE IF NOT EXISTS sys_user (
-                                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                                        username   VARCHAR(64)  NOT NULL COMMENT '登录名',
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    username   VARCHAR(64)  NOT NULL COMMENT '登录名',
     password_hash VARCHAR(100) NOT NULL COMMENT 'BCrypt 哈希',
     role       VARCHAR(32)  DEFAULT 'admin' COMMENT '角色（预留）',
     status     TINYINT      DEFAULT 1 COMMENT '1启用 0禁用',

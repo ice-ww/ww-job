@@ -16,13 +16,12 @@ import java.time.LocalDateTime;
 @Component
 @EnableScheduling
 public class RegistryCleaner {
-    private static final int EXPIRE_SECONDS = 90;
     private final JobRegistryMapper registryMapper;
     public RegistryCleaner(JobRegistryMapper registryMapper) { this.registryMapper = registryMapper; }
 
     @Scheduled(fixedRate = 10000)
     public void clean() {
-        LocalDateTime threshold = LocalDateTime.now().minusSeconds(EXPIRE_SECONDS);
+        LocalDateTime threshold = LocalDateTime.now().minusSeconds(JobRegistry.ONLINE_SECONDS);
         registryMapper.delete(new QueryWrapper<JobRegistry>().lt("heartbeat_time", threshold));
     }
 }

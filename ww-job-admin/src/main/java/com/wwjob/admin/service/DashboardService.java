@@ -2,6 +2,7 @@ package com.wwjob.admin.service;
 
 import com.wwjob.admin.dto.DashboardStats;
 import com.wwjob.admin.entity.JobLog;
+import com.wwjob.admin.entity.JobRegistry;
 import com.wwjob.admin.mapper.JobInfoMapper;
 import com.wwjob.admin.mapper.JobLogMapper;
 import com.wwjob.admin.mapper.JobRegistryMapper;
@@ -29,7 +30,7 @@ public class DashboardService {
 
     public DashboardStats stats() {
         LocalDateTime todayStart = LocalDate.now().atStartOfDay();
-        LocalDateTime onlineThreshold = LocalDateTime.now().minusSeconds(90);
+        LocalDateTime onlineThreshold = LocalDateTime.now().minusSeconds(JobRegistry.ONLINE_SECONDS);
         long jobTotal = jobInfoMapper.countAll();
         long jobEnabled = jobInfoMapper.countEnabled();
         DashboardStats s = new DashboardStats();

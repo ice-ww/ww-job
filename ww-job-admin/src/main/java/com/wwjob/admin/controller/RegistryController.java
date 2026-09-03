@@ -37,6 +37,11 @@ public class RegistryController {
                 .orderByAsc("job_group_id"));
     }
 
+    @PostMapping("/registry/offline")
+    public ReturnT<String> offline(@RequestBody RegistryParam param) {
+        return registryService.offline(param);
+    }
+
     @PostMapping("/heartbeat")
     public ReturnT<String> heartbeat(@RequestBody RegistryParam param) {
         return registryService.heartbeat(param);

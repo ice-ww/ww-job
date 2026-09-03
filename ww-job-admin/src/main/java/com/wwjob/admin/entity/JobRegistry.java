@@ -12,6 +12,8 @@ import java.time.LocalDateTime;
  */
 @TableName("job_registry")
 public class JobRegistry {
+    /** 在线判定口径：心跳超过该秒数视为离线（cleaner / dashboard / 路由共用，避免口径漂移） */
+    public static final int ONLINE_SECONDS = 90;
     @TableId(type = IdType.AUTO)
     private Long id;
     private Long jobGroupId;

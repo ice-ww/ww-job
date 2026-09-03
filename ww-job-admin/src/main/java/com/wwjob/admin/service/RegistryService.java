@@ -38,22 +38,20 @@ public class RegistryService {
         if (group == null) {
             return ReturnT.fail("执行器分组未注册: " + param.getRegistryKey());
         }
-        JobRegistry existing = registryMapper.selectOne(
-                new QueryWrapper<JobRegistry>()
-                        .eq("job_group_id", group.getId())
-                        .eq("registry_value", param.getRegistryValue()));
-        LocalDateTime now = LocalDateTime.now();
-        if (existing == null) {
-            JobRegistry r = new JobRegistry();
-            r.setJobGroupId(group.getId());
-            r.setRegistryKey(param.getRegistryKey());
-            r.setRegistryValue(param.getRegistryValue());
-            r.setHeartbeatTime(now);
-            registryMapper.insert(r);
-        } else {
-            existing.setHeartbeatTime(now);
-            registryMapper.updateById(existing);
+        registryMapper.upsert(group.getId(), param.getRegistryKey(),
+                param.getRegistryValue(), LocalDateTime.now());
+        return ReturnT.success();
+    }
+
+    public ReturnT<String> offline(RegistryParam param) {
+        JobGroup group = groupMapper.selectOne(
+                new QueryWrapper<JobGroup>().eq("app_name", param.getRegistryKey()));
+        if (group == null) {
+            return ReturnT.fail("执行器分组未注册: " + param.getRegistryKey());
         }
+        registryMapper.delete(new QueryWrapper<JobRegistry>()
+                .eq("job_group_id", group.getId())
+                .eq("registry_value", param.getRegistryValue()));
         return ReturnT.success();
     }
 }
