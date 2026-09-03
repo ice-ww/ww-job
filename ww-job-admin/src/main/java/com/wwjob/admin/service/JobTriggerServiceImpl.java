@@ -127,9 +127,9 @@ public class JobTriggerServiceImpl implements JobTriggerService {
         ReturnT<?> result = restTemplate.postForObject("http://" + address + "/run", param, ReturnT.class);
         if (result != null && result.getCode() == ReturnT.SUCCESS_CODE) {
             // ack 成功 = 执行器已受理，任务还在跑，日志保持 status=0 等回调
-            job.setTriggerLastTime(System.currentTimeMillis());
-            jobInfoMapper.updateById(job);
+            jobInfoMapper.touchLastTime(job.getId(), System.currentTimeMillis());
             return;
+
         }
         throw new RuntimeException(result != null ? result.getMsg() : "无返回");
 
@@ -179,8 +179,8 @@ public class JobTriggerServiceImpl implements JobTriggerService {
         }
         log.setHandleTime(LocalDateTime.now());
         jobLogMapper.updateById(log);
-        job.setTriggerLastTime(System.currentTimeMillis());
-        jobInfoMapper.updateById(job);
+        jobInfoMapper.touchLastTime(job.getId(), System.currentTimeMillis());
+
     }
 
     /** RestTemplate 把 SocketTimeoutException 包在 ResourceAccessException 里，沿 cause 链查找 */
