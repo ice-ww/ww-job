@@ -58,18 +58,22 @@ public class JobController {
     @PostMapping("/{id}/start")
     public ReturnT<String> start(@PathVariable Long id) {
         JobInfo job = jobInfoMapper.selectById(id);
-        job.setTriggerStatus(1);
-        job.setTriggerNextTime(CronUtil.nextTime(job.getCron(), System.currentTimeMillis()));
-        jobInfoMapper.updateById(job);
-        return ReturnT.success();
+        if (job == null) return ReturnT.fail("任务不存在");
+        long nextTime = CronUtil.nextTime(job.getCron(), System.currentTimeMillis());
+        int rows = jobInfoMapper.startById(id, nextTime);
+        return rows > 0
+                ? new ReturnT<>(ReturnT.SUCCESS_CODE, "已启动")
+                : new ReturnT<>(ReturnT.SUCCESS_CODE, "任务已处于运行状态");
     }
 
     @PostMapping("/{id}/stop")
     public ReturnT<String> stop(@PathVariable Long id) {
         JobInfo job = jobInfoMapper.selectById(id);
-        job.setTriggerStatus(0);
-        jobInfoMapper.updateById(job);
-        return ReturnT.success();
+        if (job == null) return ReturnT.fail("任务不存在");
+        int rows = jobInfoMapper.stopById(id);
+        return rows > 0
+                ? new ReturnT<>(ReturnT.SUCCESS_CODE, "已停止")
+                : new ReturnT<>(ReturnT.SUCCESS_CODE, "任务已处于停止状态");
     }
 
     @DeleteMapping("/{id}")

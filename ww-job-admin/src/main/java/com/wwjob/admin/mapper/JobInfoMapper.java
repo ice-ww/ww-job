@@ -26,4 +26,13 @@ public interface JobInfoMapper extends BaseMapper<JobInfo> {
     @Update("UPDATE job_info SET trigger_last_time = #{lastTime} WHERE id = #{id}")
     int touchLastTime(@Param("id") long id, @Param("lastTime") long lastTime);
 
+    /** stop：仅当正在跑(trigger_status=1)才置 0；行数区分「本次真停」vs「已停」 */
+    @Update("UPDATE job_info SET trigger_status = 0 WHERE id = #{id} AND trigger_status = 1")
+    int stopById(@Param("id") long id);
+
+    /** start：仅当已停(trigger_status=0)才置 1 并推进 next_time；行数区分「本次真启」vs「已启」 */
+    @Update("UPDATE job_info SET trigger_status = 1, trigger_next_time = #{nextTime} WHERE id = #{id} AND trigger_status = 0")
+    int startById(@Param("id") long id, @Param("nextTime") long nextTime);
+
+
 }

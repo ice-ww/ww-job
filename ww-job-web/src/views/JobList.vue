@@ -111,10 +111,13 @@ async function onTrigger(row) {
 }
 
 async function onToggle(row) {
-  if (row.triggerStatus === 1) {
-    await stopJob(row.id)
+  // R2：后端 stop/start 返回语义化 msg，前端读 code/msg 提示真实结果（幂等+区分状态）
+  const res = row.triggerStatus === 1 ? await stopJob(row.id) : await startJob(row.id)
+  const body = res.data
+  if (body.code === 200) {
+    ElMessage.success(body.msg || '操作成功')
   } else {
-    await startJob(row.id)
+    ElMessage.warning(body.msg || '操作失败')
   }
   loadJobs()
 }
