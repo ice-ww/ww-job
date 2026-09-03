@@ -1,6 +1,6 @@
 # 状态模型拆分(STATUS_BLOCKED=4)+ 告警跳过可见化 · 设计 spec(item 5)
 
-> 日期:2026-09-03 ｜ 状态:**设计已批准，待实现并回填实测** ｜ 前置:`docs/2026-09-03-robustness-priorities.md` §一-5(排序重议第 3 项)
+> 日期:2026-09-03 ｜ 状态:**已实现并实测(commit 0c0718c + 003e8a6/5f5568a 文档)** ｜ 前置:`docs/2026-09-03-robustness-priorities.md` §一-5(排序重议第 3 项)
 > 协作模式:本工作流用户 ice-ww **授权 Claude 全权实现**(2026-09-03 会话对 item2/item5 两次「全权动手」，例外于 [[user-participation-preference]])。spec/plan/实现/回归由 Claude 完成。
 
 ## 背景与目标
@@ -167,30 +167,36 @@ if (job.getAlarmConfig() == null || job.getAlarmConfig().isBlank()) {
 ## 交付物与验收清单
 
 **Phase A**
-- [ ] JobLog 实体 `STATUS_BLOCKED=4` + toString 常量补全
-- [ ] schema.sql status 注释含 4
-- [ ] JobDecisionService.decide 阻塞分支落 STATUS_BLOCKED
-- [ ] DashboardStats.logBlockedToday + DashboardService 计数
-- [ ] Dashboard.vue 第 7 卡 + span 3
-- [ ] constants.js LOG_STATUS +4
-- [ ] migrate SQL(手动执行,dev SELECT 留档→UPDATE→复查)
-- [ ] tools 文案(trigger_concurrent / analyze_window)
+- [x] JobLog 实体 `STATUS_BLOCKED=4` + toString 常量补全
+- [x] schema.sql status 注释含 4
+- [x] JobDecisionService.decide 阻塞分支落 STATUS_BLOCKED
+- [x] DashboardStats.logBlockedToday + DashboardService 计数
+- [x] Dashboard.vue 第 7 卡 + span 3
+- [x] constants.js LOG_STATUS +4
+- [x] migrate SQL(手动执行,dev SELECT 留档→UPDATE→复查)
+- [x] tools 文案(trigger_concurrent / analyze_window)
 
 **Phase B**
-- [ ] JobFailMonitor 未订阅告警每进程每 job WARN 一次
+- [x] JobFailMonitor 未订阅告警每进程每 job WARN 一次
 
 **验证(Claude 执行,dev 3306 单 admin 8080)**
-- [ ] 编译 `mvn -pl ww-job-admin -am compile` 绿
-- [ ] e2e 被阻塞:SINGLE 任务 + 合成 status=0 running 行 → 手动 trigger → 新 job_log **status=4** + handle_msg「被阻塞丢弃」(无需 executor,countRunning 命中即丢弃)
-- [ ] e2e 对照:dispatch 超时路径仍落 status=3(代码未动;超时行为由 item2 工具覆盖)
-- [ ] Dashboard curl:stats 含 `logBlockedToday`>0;unknown 数不含 blocked(两卡数值对照)
-- [ ] 迁移:插一条 status=3+decide 句柄的伪造行 → 跑 migrate UPDATE → 变 4(验后清理);历史真实行 SELECT 计数留档
-- [ ] Phase B:未订阅告警 job 造 status=2 失败行 → 一个扫描周期内 admin 日志出现 WARN「未订阅告警」;同 job 两条失败行只记一条(有界)
-- [ ] 回归:正常任务 status=1 / 失败 2 / 超时 3 语义不回归;前端筛选 status=4 可选
+- [x] 编译 `mvn -pl ww-job-admin -am compile` 绿
+- [x] e2e 被阻塞:SINGLE 任务 + 合成 status=0 running 行 → 手动 trigger → 新 job_log **status=4** + handle_msg「被阻塞丢弃」(无需 executor,countRunning 命中即丢弃)
+- [x] e2e 对照:dispatch 超时路径仍落 status=3(代码未动;超时行为由 item2 工具覆盖)
+- [x] Dashboard curl:stats 含 `logBlockedToday`>0;unknown 数不含 blocked(两卡数值对照)
+- [x] 迁移:插一条 status=3+decide 句柄的伪造行 → 跑 migrate UPDATE → 变 4(验后清理);历史真实行 SELECT 计数留档
+- [x] Phase B:未订阅告警 job 造 status=2 失败行 → 一个扫描周期内 admin 日志出现 WARN「未订阅告警」;同 job 两条失败行只记一条(有界)
+- [x] 回归:正常任务 status=1 / 失败 2 / 超时 3 语义不回归;前端筛选 status=4 可选
 
 ## 实测记录(2026-09-03,实现后回填)
 
-(占位——实现+验证后填写)
+单 admin(local, 3306 ww_job, 8080)回归,全部由 `tools/verify_status_split.py`(新增,C1/C2/D)与 `tools/verify_timeout_boundary.py`(超时回归)断言:
+
+- **C1 blocked 写点**:载体 job_id=9(未订阅告警,临时置 SINGLE/停用)插入合成 running 行 id=16766(二跑 16770)→ 手动 trigger → 新 blocked 日志 16767/16771:`status=4`、`handle_msg=任务上一次执行尚未结束，本次触发被阻塞丢弃`、`handle_time=NULL`。Dashboard `logBlockedToday` 0→1;`logUnknownToday` 0→0(不被污染)。
+- **migrate(真实存量)**:dev `status=3 AND handle_msg=decide句柄` 实有 **101 行**(历史压测遗留被阻塞,此前错记为「未知」)→ 跑 `migrate/2026-09-03-status-blocked.sql` 全迁 **status=4**;对照 `status=3` 超时未知行 2 条不动。C2 用合成 legacy 行 + 超时对照行复验隔离(decide 句柄等值匹配不误伤)。
+- **Phase B 告警审计**:未订阅告警 fail 行(status=2, handle_time=now)→ 一个扫描周期内 admin 日志出现一次 WARN「近 10min 有 1 次失败但未订阅告警,已跳过」;同 job 再插第二条失败行等一周期 → WARN 仍只有 1 条(`auditedNoAlarm` 有界,每进程每 job)。
+- **超时不回归**:`verify_timeout_boundary` 全绿——陈旧 running 行仍被巡检翻 **status=3**;时区去耦 A1(旧 NOW 谓词随时区翻转)/A2(新参数谓词稳定)不回退。
+- 代码提交 `0c0718c`;spec/plan 提交 `003e8a6`/`5f5568a`。tools 文案同步(trigger_concurrent「99 条 status=4」/analyze_window 图例含 4);历史 loadtest 留档数字未回改。
 
 ## 参考
 
