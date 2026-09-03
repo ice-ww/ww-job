@@ -12,11 +12,12 @@ import java.time.LocalDateTime;
  */
 @TableName("job_log")
 public class JobLog {
-    /** 日志状态：0 运行中，1 成功，2 失败，3 未知（超时/被阻塞，结果不确定） */
+    /** 日志状态：0 运行中，1 成功，2 失败，3 未知（超时，结果不确定），4 被阻塞（重叠丢弃，未执行） */
     public static final int STATUS_RUNNING = 0;
     public static final int STATUS_SUCCESS = 1;
     public static final int STATUS_FAIL = 2;
     public static final int STATUS_UNKNOWN = 3;
+    public static final int STATUS_BLOCKED = 4;   // 被阻塞(重叠丢弃，未执行)：与 STATUS_UNKNOWN 区分
 
     @TableId(type = IdType.AUTO)
     private Long id;
@@ -274,7 +275,7 @@ public class JobLog {
     }
 
     public String toString() {
-        return "JobLog{STATUS_RUNNING = " + STATUS_RUNNING + ", STATUS_SUCCESS = " + STATUS_SUCCESS + ", STATUS_FAIL = " + STATUS_FAIL + ", STATUS_UNKNOWN = " + STATUS_UNKNOWN + ", id = " + id + ", jobId = " + jobId + ", jobGroupId = " + jobGroupId + ", executorAddress = " + executorAddress + ", handlerName = " + handlerName + ", triggerType = " + triggerType + ", triggerTime = " + triggerTime + ", handleTime = " + handleTime + ", handleCode = " + handleCode + ", handleMsg = " + handleMsg + ", status = " + status + ", shardIndex = " + shardIndex + ", createTime = " + createTime + ", shardIndex = " + shardIndex + "}";
+        return "JobLog{STATUS_RUNNING = " + STATUS_RUNNING + ", STATUS_SUCCESS = " + STATUS_SUCCESS + ", STATUS_FAIL = " + STATUS_FAIL + ", STATUS_UNKNOWN = " + STATUS_UNKNOWN + ", STATUS_BLOCKED = " + STATUS_BLOCKED + ", id = " + id + ", jobId = " + jobId + ", jobGroupId = " + jobGroupId + ", executorAddress = " + executorAddress + ", handlerName = " + handlerName + ", triggerType = " + triggerType + ", triggerTime = " + triggerTime + ", handleTime = " + handleTime + ", handleCode = " + handleCode + ", handleMsg = " + handleMsg + ", status = " + status + ", shardIndex = " + shardIndex + ", createTime = " + createTime + ", shardIndex = " + shardIndex + "}";
     }
 }
 

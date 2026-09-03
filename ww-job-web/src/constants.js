@@ -15,6 +15,7 @@ export const LOG_STATUS = [
   { value: 1, label: '成功', tag: 'success' },
   { value: 2, label: '失败', tag: 'danger' },
   { value: 3, label: '未知', tag: 'warning' },
+  { value: 4, label: '被阻塞', tag: 'info' },
 ]
 
 export const fmtTime = (ts) => {

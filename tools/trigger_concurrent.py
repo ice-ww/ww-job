@@ -6,7 +6,7 @@ Phase 5 工具：对任务并发手动触发 POST /job/{id}/trigger，验证 SIN
 两种模式：
   单任务模式（SINGLE 互斥主验证）：
     python trigger_concurrent.py --job-id 13501 --count 100 --concurrency 100
-    预期：1 条分发（status=0 → 回调成功）+ 99 条 status=3 被阻塞（SINGLE）。
+    预期：1 条分发（status=0 → 回调成功）+ 99 条 status=4 被阻塞（SINGLE，item5 拆分后独立状态）。
     同毫秒并发全部在 decide() 的 selectByIdForUpdate 行锁上排队 → wall 明显长于 A/B。
 
   多任务模式（行锁粒度 A/B）：并发触发 --count 个不同 job，每 job 1 次。
@@ -14,7 +14,7 @@ Phase 5 工具：对任务并发手动触发 POST /job/{id}/trigger，验证 SIN
     预期：各 job 自己一行锁，互不排队 → wall ≈ 单次 RTT，远短于单任务模式。
     证明行锁是 per-job（jobId）而非全局。
 
-HTTP 返回恒为 code=200（trigger() 阻塞也在服务端落 status=3，不体现在响应码）；
+HTTP 返回恒为 code=200（trigger() 阻塞也在服务端落 status=4，不体现在响应码）；
 被阻塞与否以 job_log 为准，用 analyze/DB 验证。wall/per-req 为行锁串行化佐证。
 """
 import argparse

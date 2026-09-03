@@ -36,8 +36,8 @@ public class JobDecisionService {
         if (single) {
             long running = jobLogMapper.countRunning(jobId);
             if (running > 0) {
-                // 上一次执行尚未结束：丢弃本次触发（记"被阻塞"日志，不制造重复执行）
-                saveLog(job, triggerType, "任务上一次执行尚未结束，本次触发被阻塞丢弃", JobLog.STATUS_UNKNOWN);
+                // 上一次执行尚未结束：丢弃本次触发。独立 STATUS_BLOCKED=4——被丢弃≠超时未知：不入告警/巡检，Dashboard 单独可见
+                saveLog(job, triggerType, "任务上一次执行尚未结束，本次触发被阻塞丢弃", JobLog.STATUS_BLOCKED);
                 return null;
             }
         }

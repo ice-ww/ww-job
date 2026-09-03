@@ -16,6 +16,8 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -27,6 +29,9 @@ import java.util.stream.Collectors;
 public class JobFailMonitor {
     private static final Logger log = LoggerFactory.getLogger(JobFailMonitor.class);
     private static final int WINDOW_MINUTES = 10;
+
+    /** 未订阅告警的任务已 WARN 审计集合：每 admin 进程每 job 至多一条，防 30s 刷屏（重启可再记） */
+    private final Set<Long> auditedNoAlarm = ConcurrentHashMap.newKeySet();
 
     private final JobLogMapper jobLogMapper;
     private final JobInfoMapper jobInfoMapper;
@@ -68,8 +73,15 @@ public class JobFailMonitor {
                 continue;  // DB 去重窗口：上次告警 10min 内跳过
             }
             JobInfo job = jobInfoMapper.selectById(jobId);
-            if (job == null || job.getAlarmConfig() == null || job.getAlarmConfig().isBlank()) {
-                continue;  // 未订阅告警
+            if (job == null) {
+                continue;  // 任务已删除：悬空引用非告警配置问题，不属本审计
+            }
+            if (job.getAlarmConfig() == null || job.getAlarmConfig().isBlank()) {
+                if (auditedNoAlarm.add(jobId)) {
+                    log.warn("任务「{}」(id={}) 近 {}min 有 {} 次失败但未订阅告警，已跳过；如需告警请在任务配置 alarm_config",
+                            job.getJobName(), jobId, WINDOW_MINUTES, logs.size());
+                }
+                continue;  // 未订阅告警：不发送，但每 admin 进程每 job 至少一条可查 WARN
             }
             String title = "【ww-job 告警】 任务" + job.getJobName() + "执行失败";
             try {

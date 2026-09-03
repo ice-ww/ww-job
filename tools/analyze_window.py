@@ -93,7 +93,7 @@ def main():
 
     # status 分布
     status = collections.Counter(r.get("status") for r, _ in in_win)
-    print("status:", dict(status), "(0=执行中 1=成功 2=失败 3=超时/被阻塞)", flush=True)
+    print("status:", dict(status), "(0=执行中 1=成功 2=失败 3=超时未知 4=被阻塞)", flush=True)
 
     # 跨秒率：执行过的行里 handle_time != trigger_time 的占比。
     # 纯快任务基线 ~6%（时间轮 +TICK_MS 调度延迟）；共享池队头阻塞会让快任务真实排队等慢任务 → 暴涨。

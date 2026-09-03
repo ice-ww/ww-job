@@ -43,6 +43,7 @@ public class DashboardService {
         s.setLogSuccessToday(logMapper.countByStatus(todayStart, JobLog.STATUS_SUCCESS));
         s.setLogFailToday(logMapper.countByStatus(todayStart, JobLog.STATUS_FAIL));
         s.setLogUnknownToday(logMapper.countByStatus(todayStart, JobLog.STATUS_UNKNOWN));
+        s.setLogBlockedToday(logMapper.countByStatus(todayStart, JobLog.STATUS_BLOCKED));
         s.setFailTop(logMapper.selectFailTop(todayStart));
         return s;
     }

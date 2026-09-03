@@ -29,6 +29,7 @@ public interface JobLogMapper extends BaseMapper<JobLog> {
           """)
     List<Long> selectTimeoutLogIds(@Param("now") LocalDateTime now);
 
+    // 2失败 3超时未知；4被阻塞(handle_time=null)不入告警——谓词故意只收 2/3，语义见 spec A3
     @Select("SELECT l.* FROM job_log l WHERE l.status IN (2, 3) AND l.handle_time >= #{from}")
     List<JobLog> selectRecentlyFailed(@Param("from") LocalDateTime from);
 

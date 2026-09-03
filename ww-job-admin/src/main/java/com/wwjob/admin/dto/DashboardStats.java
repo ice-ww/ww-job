@@ -18,6 +18,7 @@ public class DashboardStats {
     private long logSuccessToday;
     private long logFailToday;
     private long logUnknownToday;
+    private long logBlockedToday;
     private List<FailTopItem> failTop;
 
     public DashboardStats() {
@@ -182,6 +183,22 @@ public class DashboardStats {
 
     /**
      * 获取
+     * @return logBlockedToday
+     */
+    public long getLogBlockedToday() {
+        return logBlockedToday;
+    }
+
+    /**
+     * 设置
+     * @param logBlockedToday
+     */
+    public void setLogBlockedToday(long logBlockedToday) {
+        this.logBlockedToday = logBlockedToday;
+    }
+
+    /**
+     * 获取
      * @return failTop
      */
     public List<FailTopItem> getFailTop() {
@@ -197,6 +214,6 @@ public class DashboardStats {
     }
 
     public String toString() {
-        return "DashboardStats{jobTotal = " + jobTotal + ", jobEnabled = " + jobEnabled + ", jobDisabled = " + jobDisabled + ", executorTotal = " + executorTotal + ", executorOnline = " + executorOnline + ", logTotalToday = " + logTotalToday + ", logSuccessToday = " + logSuccessToday + ", logFailToday = " + logFailToday + ", logUnknownToday = " + logUnknownToday + ", failTop = " + failTop + "}";
+        return "DashboardStats{jobTotal = " + jobTotal + ", jobEnabled = " + jobEnabled + ", jobDisabled = " + jobDisabled + ", executorTotal = " + executorTotal + ", executorOnline = " + executorOnline + ", logTotalToday = " + logTotalToday + ", logSuccessToday = " + logSuccessToday + ", logFailToday = " + logFailToday + ", logUnknownToday = " + logUnknownToday + ", logBlockedToday = " + logBlockedToday + ", failTop = " + failTop + "}";
     }
 }

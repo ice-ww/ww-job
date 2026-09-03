@@ -19,6 +19,7 @@ const cards = [
   { key: 'logSuccessToday', label: '今日成功', to: '/joblogs?status=1', color: '#67c23a' },
   { key: 'logFailToday', label: '今日失败', to: '/joblogs?status=2', color: '#f56c6c' },
   { key: 'logUnknownToday', label: '今日未知', to: '/joblogs?status=3', color: '#e6a23c' },
+  { key: 'logBlockedToday', label: '今日被阻塞', to: '/joblogs?status=4', color: '#909399' }, // info 灰：丢弃，非故障
 ]
 
 async function load() {
@@ -49,7 +50,7 @@ onUnmounted(() => clearInterval(timer))
     </div>
 
     <el-row :gutter="16" v-loading="loading">
-      <el-col v-for="c in cards" :key="c.key" :span="4">
+      <el-col v-for="c in cards" :key="c.key" :span="3">
         <el-card class="stat-card" shadow="hover" @click="router.push(c.to)">
           <div class="num" :style="c.color ? { color: c.color } : {}">{{ fmt(stats?.[c.key]) }}</div>
           <div class="label">{{ c.label }}</div>
