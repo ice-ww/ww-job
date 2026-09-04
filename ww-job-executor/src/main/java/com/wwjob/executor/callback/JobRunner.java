@@ -37,7 +37,12 @@ public class JobRunner implements Runnable {
         if (result == null) {
             result = ReturnT.fail("handler 返回 null, 疑似实现缺陷");
         }
+        String handleMsg = result.getMsg();
+        if (handleMsg == null && result.getData() != null) {
+            handleMsg = result.getData();
+        }
         reporter.report(new CallbackParam(ctx.getLogId(),
-                result.getCode(), result.getMsg(), System.currentTimeMillis()));
+                result.getCode(), handleMsg, System.currentTimeMillis()));
+
     }
 }
