@@ -34,5 +34,9 @@ public interface JobInfoMapper extends BaseMapper<JobInfo> {
     @Update("UPDATE job_info SET trigger_status = 1, trigger_next_time = #{nextTime} WHERE id = #{id} AND trigger_status = 0")
     int startById(@Param("id") long id, @Param("nextTime") long nextTime);
 
-
+    /** 只推进下次触发时间（窄更新）。全行 updateById 会把加载时的旧 update_time 显式写回，
+     *  使 ON UPDATE CURRENT_TIMESTAMP 永不触发（update_time 恒等于 create_time）；窄更新规避之。
+     *  行锁内/幂等追赶场景均安全 */
+    @Update("UPDATE job_info SET trigger_next_time = #{nextTime} WHERE id = #{id}")
+    int advanceNextTime(@Param("id") long id, @Param("nextTime") long nextTime);
 }

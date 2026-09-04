@@ -88,8 +88,7 @@ public class ScheduleHelper {
             // 任务落后（如 admin 重启、上次推进失败）：直接跳到下一个未来触发点。
             // 这样既不会立即补发触发，也不会因 query 只查未来而永久失活
             next = CronUtil.nextTime(job.getCron(), now);
-            job.setTriggerNextTime(next);
-            jobInfoMapper.updateById(job);
+            jobInfoMapper.advanceNextTime(job.getId(), next);   // 原 jobInfoMapper.updateById(job) → 窄更新
         }
         long delay = Math.max(0, next - now);
         // 时间轮按 ~1010ms 粗粒度推进，任务实际触发 = 上次推进时刻 + delayTicks×实际节拍，
@@ -98,9 +97,10 @@ public class ScheduleHelper {
         // 数学上保证 触发时刻 ≥ 边界（永不提前），至多晚一个 tick。
         timeWheel.addTask(delay + TICK_MS, () -> {
             try {
-                // 触发点幂等：行锁内先推进 next_time（标记本次已分配），返回 true 才真正触发
-                if (triggerService.claimNextTime(job.getId(), job.getCron())) {
-                    triggerService.trigger(job.getId(), "cron");
+                // 触发点幂等：行锁内先推进 next_time，返回非 null 才真正触发，并直接喂入锁内新鲜 job
+                JobInfo claimed = triggerService.claimNextTime(job.getId(), job.getCron());
+                if (claimed != null) {
+                    triggerService.trigger(claimed, "cron");   // 原 trigger(job.getId(),"cron")：不再二次 selectById
                 }
             } finally {
                 scheduledJobIds.remove(job.getId());

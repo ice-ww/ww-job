@@ -11,6 +11,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
+import com.wwjob.admin.service.JobDecisionService.DecideResult;
 
 import java.net.SocketTimeoutException;
 import java.time.LocalDateTime;
@@ -47,33 +48,36 @@ public class JobTriggerServiceImpl implements JobTriggerService {
     public void trigger(long jobId, String triggerType) {
         JobInfo job = jobInfoMapper.selectById(jobId);
         if (job == null) return;
+        trigger(job, triggerType);
+    }
+
+    @Override
+    public void trigger(JobInfo job, String triggerType) {
         if ("sharding".equalsIgnoreCase(job.getRouteStrategy())) {
             broadcast(job, triggerType);
             return;
         }
-        Long logId = jobDecisionService.decide(jobId, triggerType);
-        if (logId == null) return;
-        dispatch(logId, job, triggerType);
+        DecideResult result = jobDecisionService.decide(job.getId(), triggerType);
+        if (result == null) return;
+        dispatch(result, triggerType);
     }
 
     /** 触发点幂等：行锁内判断本次触发点是否已被别台分配，未分配则先推进 next_time 再放行 */
     @Transactional
     @Override
-    public boolean claimNextTime(long jobId, String cron) {
+    public JobInfo claimNextTime(long jobId, String cron) {
         JobInfo job = jobInfoMapper.selectByIdForUpdate(jobId);
         if (job == null || job.getTriggerStatus() == null || job.getTriggerStatus() != 1) {
-            return false;   //任务不存在或已停用
+            return null;   // 任务不存在或已停用
         }
         long now = System.currentTimeMillis();
-        Long lastNext = job.getTriggerNextTime();
-        if (!claimable(lastNext, now)) {
-            return false;   // 已被别台推进 / 触发点边界秒尚未整体过去
+        if (!claimable(job.getTriggerNextTime(), now)) {
+            return null;   // 已被别台推进 / 触发点边界秒尚未整体过去
         }
-
         long next = CronUtil.nextTime(cron, now);
+        jobInfoMapper.advanceNextTime(jobId, next);   // 窄更新推进（A4，已就位）
         job.setTriggerNextTime(next);
-        jobInfoMapper.updateById(job);
-        return true;
+        return job;   // 返回锁内新鲜 job，调度器喂给 trigger(job)
     }
 
     /**
@@ -101,22 +105,19 @@ public class JobTriggerServiceImpl implements JobTriggerService {
         for (int i = 0; i < total; i++) {
             // handle_code = null --> 任务才受理，还未执行
             JobLog log = new JobLog(job, triggerType, "已受理，等待执行结果", null, JobLog.STATUS_RUNNING, i);
+            log.setExecutorAddress(addresses.get(i));   // 地址落库进 INSERT（原由 dispatchOne 补写）
             jobLogMapper.insert(log);
             try {
                 dispatchOne(log, job, addresses.get(i), total);
             } catch (Exception e) {
-                log.setStatus(JobLog.STATUS_FAIL);
-                log.setHandleCode(ReturnT.FAIL_CODE);
-                log.setHandleMsg("投递失败：" + e.getMessage());
-                log.setHandleTime(LocalDateTime.now());
-                jobLogMapper.updateById(log);
+                jobLogMapper.endRunning(log.getId(), JobLog.STATUS_FAIL, ReturnT.FAIL_CODE,
+                        "投递失败：" + e.getMessage(), LocalDateTime.now());
             }
         }
     }
 
     private void dispatchOne(JobLog log, JobInfo job, String address, int shardTotal) {
-        log.setExecutorAddress(address); //这里只改了内存对象，没有改数据库
-        jobLogMapper.updateById(log);  // 写回数据库，否则地址白设(永远是null)
+        // 地址在 decide/broadcast 落日志时已写入 DB（P1 去 #10），此处只做 HTTP，不再 updateById 补写
         TriggerParam param = new TriggerParam();
         param.setJobId(job.getId());
         param.setHandler(job.getHandlerName());
@@ -129,58 +130,60 @@ public class JobTriggerServiceImpl implements JobTriggerService {
             // ack 成功 = 执行器已受理，任务还在跑，日志保持 status=0 等回调
             jobInfoMapper.touchLastTime(job.getId(), System.currentTimeMillis());
             return;
-
         }
         throw new RuntimeException(result != null ? result.getMsg() : "无返回");
-
     }
 
 
-    /** 路由 + 分发 + 最多 retryCount 次重试，最后按"成功 / 明确失败 / 超时未知"三态落日志 */
-    private void dispatch(Long logId, JobInfo job, String triggerType) {
+    /** 分发：attempt0 直接复用 decide 已路由落库的地址（不再 route、不再补写）；
+     *  仅 retry（attempt>0）重新 route，换地址走窄更新。收尾一律 endRunning(status=0 守卫)，
+     *  并发回调先落终态时 0 行自然跳过，不覆盖真实结果。 */
+    private void dispatch(DecideResult result, String triggerType) {
+        JobInfo job = result.getJob();
+        JobLog log = result.getLog();
         long jobId = job.getId();
-        JobLog log = jobLogMapper.selectById(logId);
-        if (log == null) return;
+        String firstAddress = log.getExecutorAddress();
+        if (firstAddress == null) return;   // decide 已保证无执行器时返回 null 不进来，防御
         int retryCount = job.getRetryCount() == null ? 0 : job.getRetryCount();
         Exception lastError = null;
 
-        // 最多尝试 retryCount+1 次：第 1 次 + retryCount 次重试
         for (int attempt = 0; attempt <= retryCount; attempt++) {
-            String address = routerService.route(job.getJobGroupId(), job.getRouteStrategy(), jobId);
-            if (address == null) {
-                log.setStatus(JobLog.STATUS_FAIL);
-                log.setHandleMsg("无可用执行器");
-                jobLogMapper.updateById(log);
-                return;
+            String address;
+            if (attempt == 0) {
+                address = firstAddress;          // decide 已在 INSERT 前路由并落库
+            } else {
+                address = routerService.route(job.getJobGroupId(), job.getRouteStrategy(), jobId);
+                if (address == null) {
+                    jobLogMapper.endRunning(log.getId(), JobLog.STATUS_FAIL, ReturnT.FAIL_CODE, "无可用执行器",
+                            LocalDateTime.now());
+                    return;
+                }
+                if (!address.equals(log.getExecutorAddress())) {
+                    log.setExecutorAddress(address);
+                    jobLogMapper.updateExecutorAddress(log.getId(), address);   // 窄更新换地址
+                }
             }
             try {
-                dispatchOne(log, job, address, 0); //单台传 shardTotal=0
-                    return;
+                dispatchOne(log, job, address, 0);
+                return;
             } catch (Exception e) {
                 lastError = e;
-                // 超时 = 结果未知，执行器可能仍在执行：重试必然造成重复执行（扣款/发短信等非幂等事故），直接放弃。
-                // 只有连接被拒绝（handler 没跑）或明确失败响应才允许重试
+                // 超时 = 结果未知，执行器可能仍在执行：重试必然重复执行，直接放弃
                 if (isTimeout(e)) {
                     break;
                 }
             }
         }
 
-        // 三态落日志：成功 / 明确失败 / 超时未知
-        // 成功在上面已处理，只剩失败和超时未知
         if (isTimeout(lastError)) {
-            log.setStatus(JobLog.STATUS_UNKNOWN);
-            log.setHandleCode(ReturnT.FAIL_CODE);
-            log.setHandleMsg("执行超时，结果未知：执行器可能仍在执行，请以执行器日志为准，勿重复触发");
+            jobLogMapper.endRunning(log.getId(), JobLog.STATUS_UNKNOWN, ReturnT.FAIL_CODE,
+                    "执行超时，结果未知：执行器可能仍在执行，请以执行器日志为准，勿重复触发",
+                    LocalDateTime.now());
         } else {
-            log.setStatus(JobLog.STATUS_FAIL);
-            log.setHandleCode(ReturnT.FAIL_CODE);
-            log.setHandleMsg(lastError != null ? lastError.getMessage() : "无返回");
+            jobLogMapper.endRunning(log.getId(), JobLog.STATUS_FAIL, ReturnT.FAIL_CODE,
+                    lastError != null ? lastError.getMessage() : "无返回", LocalDateTime.now());
         }
-        log.setHandleTime(LocalDateTime.now());
-        jobLogMapper.updateById(log);
-        jobInfoMapper.touchLastTime(job.getId(), System.currentTimeMillis());
-
+        jobInfoMapper.touchLastTime(jobId, System.currentTimeMillis());
     }
 
     /** RestTemplate 把 SocketTimeoutException 包在 ResourceAccessException 里，沿 cause 链查找 */

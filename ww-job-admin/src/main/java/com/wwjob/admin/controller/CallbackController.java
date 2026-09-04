@@ -26,17 +26,18 @@ public class CallbackController {
 
     @PostMapping("/callback")
     public ReturnT<String> callback(@RequestBody CallbackParam param){
-        JobLog log = jobLogMapper.selectById(param.getLogId());
-        if (log == null) {
-            return ReturnT.fail("logId 不存在:" + param.getLogId());
+        int status = param.getHandleCode() == ReturnT.SUCCESS_CODE ? JobLog.STATUS_SUCCESS : JobLog.STATUS_FAIL;
+        LocalDateTime handleTime = LocalDateTime.ofInstant(
+                Instant.ofEpochMilli(param.getHandleTime()), ZoneId.systemDefault());
+        int rows = jobLogMapper.completeById(param.getLogId(), status,
+                param.getHandleCode(), param.getHandleMsg(), handleTime);
+        if (rows > 0) {
+            return ReturnT.success();
         }
-        log.setStatus(param.getHandleCode() == ReturnT.SUCCESS_CODE ? JobLog.STATUS_SUCCESS : JobLog.STATUS_FAIL);
-        log.setHandleCode(param.getHandleCode());
-        log.setHandleMsg(param.getHandleMsg());
-        log.setHandleTime(LocalDateTime.ofInstant(
-                Instant.ofEpochMilli(param.getHandleTime()), ZoneId.systemDefault()));
-        jobLogMapper.updateById(log);
-        return ReturnT.success();
+        // 0 行：要么 logId 不存在，要么已终态（幂等）。只在罕见分支查一次库
+        return jobLogMapper.selectById(param.getLogId()) == null
+                ? ReturnT.fail("logId 不存在:" + param.getLogId())
+                : ReturnT.success("已是最新状态，忽略重复回调");
     }
 
 }
