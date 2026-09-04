@@ -97,27 +97,50 @@ def main():
     reg({"registryKey": KEY, "registryValue": fake}, path="/registry/offline")
     check(count_row(fake) == 0, "清理 fake value 行")
 
-    # ---- V2 路由新鲜度：把唯一在线行心跳调旧 → 手动触发落「无可用执行器」----
-    q("UPDATE job_registry SET heartbeat_time = DATE_SUB(NOW(), INTERVAL 100 SECOND) "
-      "WHERE job_group_id=%s AND registry_value=%s", (GROUP_ID, VALUE))
-    still_there = count_row()
+    # ---- V2 路由按 B2 语义（2026-09-04 Stage B 起）----
+    # route 在线性以「本 admin 内存缓存」为权威，缓存写穿自同一 admin 的 upsert(/registry /heartbeat)、
+    # offline(删行)、cleaner(90s 阈值)。生产路径下 DB 心跳行只经这些 admin 写点变更，与缓存同写同删，
+    # 不会出现「DB 陈旧但缓存新鲜」。旧版「直接 SQL 调旧 DB 心跳 → 期望不入 route」的手法因此失效
+    # （SQL 绕过写点，缓存仍新鲜 → 照常路由，实测 status=1 —— 恰证 B2 缓存生效）。
+    # 新鲜度/驱逐不变式改经同生产通道验证：offline 驱逐、B-2 空集回退、回退仍按 90s 过滤僵尸。
+    #
+    # V2a: B-2 空集回退 —— offline（DB 删行 + 缓存剔除）→ 立即触发 → 缓存空→回退 DB(空)→「无可用执行器」
+    r = reg({"registryKey": KEY, "registryValue": VALUE}, path="/registry/offline")
+    check(r.status_code == 200 and r.json().get("code") == 200, "V2a offline 200（清 DB 行 + 缓存）")
+    check(count_row() == 0, f"V2a offline 后 DB 无行（实际 {count_row()}）")
     tr = trigger(JOB_ID, hdrs)
-    check(tr.status_code == 200, f"陈旧心跳下手动 trigger 200（http={tr.status_code}）")
+    check(tr.status_code == 200, f"V2a 缓存空手动 trigger 200（http={tr.status_code}）")
     log = latest_log(JOB_ID)
-    print(f"      陈旧时最新日志 id={log[0]} status={log[1]} msg={log[2]}")
-    check(log[2] is not None and "无可用执行器" in log[2],
-          f"V2a 僵尸不被派活：route 空 → status=2 无可用执行器（status={log[1]}；触发时行仍在={still_there}，证明是新鲜度过滤生效）")
+    print(f"      V2a 最新日志 id={log[0]} status={log[1]} msg={log[2]}")
+    check(log[1] == 2 and log[2] is not None and "无可用执行器" in log[2],
+          f"V2a 空集回退 DB → status=2 无可用执行器（实际 status={log[1]}）")
 
-    # 恢复心跳 → 再触发 → 成功派发（demoHandler 回调 status=1）
-    r = reg({"registryKey": KEY, "registryValue": VALUE})
-    check(r.status_code == 200, "恢复心跳 register 200")
-    check(count_row() == 1, f"恢复后行数=1（实际 {count_row()}）")
+    # V2b: 回退仍过滤僵尸 —— 缓存空态直插一条 >90s 陈旧心跳行（独立 value，避开与真实行唯一键冲突；
+    #      绕过 admin 写点，模拟 DB 残留旧行）。触发经 DB 回退的 90s 阈值过滤 → 仍「无可用执行器」，
+    #      新鲜度口径不因 B-2 回退而失守。
+    zombie = "127.0.0.1:9999"
+    q("INSERT INTO job_registry (job_group_id, registry_key, registry_value, heartbeat_time) "
+      "VALUES (%s, %s, %s, DATE_SUB(NOW(), INTERVAL 100 SECOND))", (GROUP_ID, KEY, zombie))
+    check(count_row(zombie) == 1, "V2b 僵尸行已直插 DB（行数=1）")
     tr = trigger(JOB_ID, hdrs)
-    check(tr.status_code == 200, "恢复心跳后手动 trigger 200")
+    check(tr.status_code == 200, f"V2b 缓存空+僵尸行手动 trigger 200（http={tr.status_code}）")
+    log = latest_log(JOB_ID)
+    print(f"      V2b 最新日志 id={log[0]} status={log[1]} msg={log[2]}")
+    check(log[1] == 2 and log[2] is not None and "无可用执行器" in log[2],
+          f"V2b 回退按 90s 过滤僵尸 → status=2 无可用执行器（实际 status={log[1]}）")
+    q("DELETE FROM job_registry WHERE job_group_id=%s AND registry_value=%s", (GROUP_ID, zombie))
+    check(count_row(zombie) == 0, "V2b 僵尸行已清理")
+
+    # V2c: 恢复在线 —— register(upsert：DB+缓存同写) → 路由恢复，派给 executor 落 status=1
+    r = reg({"registryKey": KEY, "registryValue": VALUE})
+    check(r.status_code == 200, "V2c 恢复 register 200")
+    check(count_row() == 1, f"V2c 恢复后行数=1（实际 {count_row()}）")
+    tr = trigger(JOB_ID, hdrs)
+    check(tr.status_code == 200, "V2c 恢复后手动 trigger 200")
     time.sleep(1.0)
     log = latest_log(JOB_ID)
-    print(f"      恢复后最新日志 id={log[0]} status={log[1]} msg={log[2]}")
-    check(log[1] == 1, f"V2b 心跳恢复 → 派给 executor 成功落 status=1（实际 status={log[1]}）")
+    print(f"      V2c 最新日志 id={log[0]} status={log[1]} msg={log[2]}")
+    check(log[1] == 1, f"V2c 恢复在线 → 派给 executor 成功落 status=1（实际 status={log[1]}）")
 
     # ---- V3 offline 幂等 + 自愈 ----
     r = reg({"registryKey": KEY, "registryValue": VALUE}, path="/registry/offline")
