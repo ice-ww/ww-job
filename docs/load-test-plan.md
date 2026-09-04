@@ -83,10 +83,10 @@ spring:
 mvn -q -DskipTests install
 ```
 
-**④ 起 admin**：
+**④ 起 admin**（注意：PowerShell 会把 `-Dxxx=yyy` 拆开，整个 `-D` 参数必须加双引号）：
 
-```bash
-mvn -pl ww-job-admin spring-boot:run -Dspring-boot.run.profiles=loadtest
+```powershell
+mvn -pl ww-job-admin spring-boot:run "-Dspring-boot.run.profiles=loadtest"
 ```
 
 **⑤ 起 executor**（samples，8081；确认 `application.yml` 里 `wwjob.executor.admin-addresses` 指向 `http://localhost:8080`）：
@@ -297,12 +297,18 @@ SET GLOBAL long_query_time = 0.5;
 
 | 档位(D) | N | 实测密度/s | 成功率% | status3% | P99(ms) | admin CPU% | DB写/s | 触发线程池活跃/拒绝 | 空秒数 | 同时运行峰值 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **P1 基线 D=10** | 100 | 10.1 | 100 | 0 | ~1000\* | 13%单核 | ~20 | 无拒绝 | 0 | ≈10 |
 
 说明：
 - **实测密度** = 10s 窗口 job_log 插入数 ÷ 10；
 - **P99**：抽样 job_log 的执行耗时（handle 相关字段）计算，或人工抽样；
 - **触发线程池活跃/拒绝**：Phase 2 中 admin 日志/Actuator 观测，AbortPolicy 触发即线程池到顶；
 - **同时运行峰值** = status=0 的 job_log 最大 count（Phase 3）。
+
+> **实测注意事项（Phase 1 踩过的坑，后续 Phase 必须遵守）**：
+> 1. **时区**：MySQL 容器是 UTC，应用经 JDBC `serverTimezone=Asia/Shanghai` 写入上海时间。SQL 里 `NOW()` 是 UTC，与 `trigger_time`（上海）差 8 小时 → **永远用显式时间边界过滤**（如 `trigger_time BETWEEN '2026-09-01 23:32:40' AND '...'`），不要用 `NOW() - INTERVAL`。
+> 2. **DATETIME 秒精度**：`trigger_time`/`handle_time` 是秒级 DATETIME，同秒内完成的执行 diff=0，跨秒显示 1000ms。**"1000ms" ≠ 执行耗时**，而是时间轮故意 `+TICK_MS`（ScheduleHelper:99 保证永不提前）带来的**调度延迟 0~1s** + 秒精度取整。快任务本身 <5ms。P99 应解读为"调度延迟上界"，不是执行延迟。
+> 3. **CPU 采样**：`Get-Process java` 的 CPU 是累计值，两次采样差值 ÷ 间隔 = 占用率；必须按 PID 拆开（netstat 定位 8080=admin / 8081=executor），Maven 残留 JVM 会干扰。
 
 ---
 
