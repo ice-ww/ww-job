@@ -527,10 +527,12 @@ Expected: BUILD SUCCESS
 
 ### Task 7: D=300 A/B 压测对照（阶段 A 验收门，Claude 执行）
 
-- [ ] 单 admin D=300 快任务，与 `docs/load-test-results.md` 基线（~150/s 拐点）同口径跑 3 分钟
-- [ ] 观察 Hikari 连接池饱和度 / 触发池利用率变化
-- [ ] 结果写回 `docs/load-test-results.md`：P1 标记「已修复（commit xxx）」+ 吞吐前后对照
-- [ ] 通过则进入阶段 B（另立 spec/计划）；未达标则按 spec §阶段B 的 B1/B2 设计方向补强后重测
+- [x] 单 admin D=300 快任务，与 `docs/load-test-results.md` 基线（~150/s 拐点）同口径跑 3 分钟
+- [x] 观察 Hikari 连接池饱和度 / 触发池利用率变化
+- [x] 结果写回 `docs/load-test-results.md`：P1 标记「已修复（commit xxx）」+ 吞吐前后对照
+- [x] 通过则进入阶段 B（另立 spec/计划）；未达标则按 spec §阶段B 的 B1/B2 设计方向补强后重测
+
+> **T7 裁定（2026-09-04，阶段 A 达标 → 进入阶段 B）**：P12 实测 33379 行/200s = **166.9/s**（前 100s ~165/s → 末 80s ~208/s 爬升），对照 P4b 基线 149.6/s → **+12% 且墙位上移**；status 100%=1（status=3/4 均 0）、distinct=3000、同秒双触发=0、interval p50 19s、CPU 1.1~1.4 核 + DB往返/s 反降近半（P4b 263%单核/~1500）。写放大收敛（~10→5 stmts/触发）释放触发池占用 → 单 admin 墙由 ~150 顶开。**验收通过**。完整对照与诚实标注（非严格单变量）见 `docs/load-test-results.md` §Phase10 F10-1 + §1 P12 行。阶段 B（B1/B2）另立 spec/计划；重测建议窗口 5min+ 且先 warm-up 到稳态（200s 窗均值低估窗末容量）。
 
 ---
 

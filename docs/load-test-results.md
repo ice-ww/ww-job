@@ -12,8 +12,8 @@
 | 系统 | Windows 11 Home China |
 | CPU | AMD Ryzen 5 4600H，6 核 12 线程 |
 | 内存 | 15.4GB（压测启动前空闲 ~4.9GB） |
-| JDK | 25 |
-| 部署方式 | Docker Desktop 29.7.2（WSL2）起 MySQL 容器 `ww-job-loadtest-mysql`（mysql:8），admin 8080 / executor 8081 本机 `mvn spring-boot:run` |
+| JDK | 21.0.9（wwjdk21，G1，默认堆） |
+| 部署方式 | Docker Desktop 4.89.0（WSL2，per-user 安装于 `AppData\Local\Programs\DockerDesktop`）起 MySQL 容器 `ww-job-loadtest-mysql`（mysql:8），admin 8080 / executor 8081 本机进程 |
 | 压测库 | `ww_job_loadtest` @ localhost:3307（隔离 3306 开发库），admin 用 `loadtest` profile 启动 |
 | 执行器 | samples 模块，app-name `sample-executor`，handler `loadTestHandler`（param 空/0=快任务，正整数=sleep，fail=抛异常） |
 
@@ -42,6 +42,7 @@
 | **P9 D=300 双admin·30min稳定性**（同P8b配置，连跑 31min55s ④） | 3000 | 145.4 | 100 | **0** | - | A/B各<1核④ | - | 0 | 0 | - | **30 分钟持续饱和稳定性通过**：status=3 全程 0（F6-2 修复 30min 零复发，对比 P8a 修复前 3min 就有 33）、st3_60s/distinct60 各采样点全 0/3000、FGC 全程 0、堆 71~87% 震荡有界、线程 A85/B74 恒稳无线程泄漏、MySQL 连接 59~62 无耗尽；30min 均密度 145.4/s 高于 P8b 127.0/s → 坐实 P8b -11% 为采样方差非修复代价（见 §Phase7） |
 | **P10 D=300 双admin·中途强杀adminA**（同P8b配置，饱和稳态中 taskkill A=8080，B 单机接管 235s） | 3000 | 131.5→142.5 | 100 | **0** | - | A死前后 B 各<1核④ | - | 0 | 0 | - | **故障恢复验证：executor 心跳/回调 failover 到 B 零丢失**——pre-kill 22216 行全 status=1、post-kill 33485 行全 status=1、无残留 status=0、巡检兜底无对象可扫、st3 全 0；**B 单机接管密度反超 142.5 vs 131.5/s（双 admin 行锁竞争税随 A 死消失，呼应 F6-1）**；distinct60 一次 2986 瞬态自愈（A claim-未投递点随进程消亡丢一拍，非故障）；巡检 SQL 的 NOW() 时区耦合见 §Phase8 F8-4 |
 | **P11 executor-kill 小批量**（kill executor 13164，手动触发 91 次分四窗，双 admin 存活） | 91 | 手动 | - | 0 | - | - | - | - | - | - | **executor 故障恢复闭环**：①dispatch 到死地址 → 30×status=2（handle_code=500 `I/O error...Connection refused`，2.1s 全落账，**快速失败无残留 status=0**）；②RegistryCleaner 90s 在线移除（最后心跳+92s）；③registry 空后 route 返回 null → 30×status=2「无可用执行器」（handle_code=NULL，与①可区分）；④重启 executor → boot 2s @PostConstruct 广播重注册 → 30×status=1 恢复；**executor 离线 5.7min 全程零 status=0 孤儿**（见 §Phase9） |
+| **P12 D=300 单admin pool=30**（P1-SA 后，同 P4b 口径重测） | 3000 | 300→167（末80s ~208） | 100 | **0**（status4=0） | - | 1.1~1.4核 | ~835~1040 DB往返/s（每触发~5） | 0（触发池24，墙由~150上移至~200+） | 0 | - | **阶段A验收：写放大~10→5 stmts/触发后同口径密度 149.6→166.9/s（+12%）、窗末爬升~210/s**；冻结 33379 行/200s、status 全1（超时3/阻塞4 均0）、distinct=3000、同秒双触发=0（F6-2延续）、interval p50 19s；CPU 1.1~1.4核+DB往返/s反降近半（P4b 263%单核/~1500）→ 每触发成本下降佐证；drain 即时冻结 0 复活；**P1（写放大）已修复 commit c0b80a7+4931e90**（见 §Phase10 F10-1） |
 
 ① P2b 行 CPU 为 D=100 时采样，D=50 恢复态未单独采样（同配置，近似）。
 ② P6a/P6b 即 Phase 4（混合+失败场景），为 plan §Phase 4 的两半；CPU/DB 采样未做（P6 档无单独采样，参考 P4b 的 263% 单核）。
@@ -350,6 +351,22 @@ A 重启（tools/launch_adminA.cmd，新 PID 26048）后最终 env 核验曾见 
 
 **Phase 9 未覆盖（环境限制，非产品缺陷）：** ack 后 executor 中途崩溃（job 已受理 status=0、回调永不达）→ 该 status=0 孤儿本应由巡检 60s 兜底收 status=3「执行超时未收到回调」，但本环境巡检阈值时区错位 ~8h（F8-4）窗口内不可见，需 DB 与 JVM 时区一致的部署环境单测。「dispatch 失败侧」（本档实测闭环）与「ack 后崩溃侧」（巡检兜底设计意图，机制早前 timeout 场景已验）是两条独立路径。
 
+### Phase 10 收获（P1 Stage A 写放大收敛后：D=300 单 admin A/B 对照）
+
+**P12 实测（阶段 A 验收门，2026-09-04 11:30:42~11:34:02，200s）。**
+同 P4b 口径复测：同批次 1-3000（loadTestHandler 快任务、K=10、cron 每 10s、全 SINGLE）、单 admin（loadtest profile，8080，Hikari pool=30）、executor 8081、双 fsync 全关（sync_binlog=0 + `innodb_flush_log_at_trx_commit=2`，容器内全局保留，重启不丢）。代码 = HEAD（P1-SA `c0b80a7` Task1-5 + `4931e90` JobRunner 回调；前置 F2-9 `1f0b7f2` / F6-2 `44e0b16` / item5 `0c0718c` 同批在代码内）。JDK 21.0.9 默认堆 G1。enable 1-3000 打满后观测 200s，`disable.py` 串行停 3000 后**即时冻结：0 复活、0 status=0 残留**（F2-9 修复在高负载下继续成立，无需旧式 3 轮收敛）。冻结态 + DB 双口径核验一致：
+
+- **密度：冻结 trigger_time 口径 33379 行 / 200s = 166.9/s**；observe 插入口径 33141/200s = 165.7/s；DB 侧边累计 t+200s = 167.4/s → 三口径互证（±0.7%）。**时间形态非平线**：前 100s ~165/s → t+110s 起 10s 桶 189~241/s、末 80s 均值 ~208/s——稳态墙由基线 ~150/s 至少上移至 ~200/s 级（窗末仍在上行、未及平台，200s 均值低估稳态容量）。
+- **per-sec：200/200 秒 ≥1（min 61 / max 271 / avg 166.9），零空秒**。
+- **正确性红线全绿**：status 全 {1: 33379}（100%），status=3（超时）= 0、status=4（SINGLE 阻塞，item5 拆分后口径）= 0——对照 P4b 修复前 0.6% 阻塞（当时归 status=3）；**同 job 同秒双触发 = 0**（F6-2 秒截断在高密度延续，决定性 SQL 零返回）；distinct job_id = 3000、窗口内 <2 次触发 job = 0。
+- **per-job interval p50=19.0s / p90=25.0s / max=43s**（n=30379）= 3000÷167/s 的倒数；对照 P4b p50 20s——服务率随密度同比提高，无异常迟到。
+- **资源**：admin CPU 10 采样 1.07~1.40 核（末段随密度爬升），对照 P4b **263% 单核 @ 更低密度 150/s** → 每触发 CPU 近减半（与往返 10→5 吻合）；**行锁 waits_delta=27 / ~46k 触发 ≈ 0.0006/触发**（单 admin 本就 ~0，无新墙迹象）；Hikari conns 恒 31（池 30 满配，无 acquire 阻塞/超时信号）。
+- **DB 写放大（成功路径 probe 口径 ~5.0 stmts/触发，df84684 回归 c1-c7 锁定）**：167/s × 5 ≈ **~835 DB往返/s**（尾段 208/s 时 ~1.0k/s），对照 P4b ~1500 DB往返/s @ 150/s——**密度更高而 DB 往返/s 反降近半**。
+
+**F10-1：P1（写放大优先项）Stage A 达标判定 + 吞吐对照（commit `c0b80a7`+`4931e90` 标记「已修复」）。**
+写放大收敛（每触发 DB 往返 ~10 → 5）后同口径密度 **149.6 → 166.9/s（+12%，全窗均值）**，且形态由 P4b 的"平线贴墙"变为"爬升到 ~210/s（末 80s）"。证据链：DB 往返/s 反降（~1500 → ~835）、CPU/触发近减半（263% 单核@150/s → 1.1~1.4 核@167/s）、行锁 ~0、连接池满配无阻塞 → **减半的往返占用释放了触发线程（池 24，P4b 档 24/24 RUNNABLE 是墙）的占用时长，单 admin 稳态墙由 ~150/s 顶开**。**结论：阶段 A 达标，可进入阶段 B**（B1 claim+decide 单事务、B2 registry 内存缓存将续压每触发往返，预期继续推高墙位；届时重测建议窗口 5min+ 且先 warm-up 到稳态，因本次 200s 均值低估了窗末容量）。
+诚实标注：非严格单变量 A/B——P4b（2026-09-02）与本档之间另含 F2-9（`1f0b7f2`）、F6-2（`44e0b16`）、item5（`0c0718c`）修复，但三者均不改**成功路径**每触发往返数（F2-9 收敛 stop 竞态路径、F6-2 在 claim 幂等门、item5 在失败/阻塞路径），本档主要变量 = P1-SA；本机环境未调优、绝对容量仅供同架构相对参考（§0 纪律）。
+
 ---
 
 ## 4. 结论汇总（Phase 1~9 全部完成后）
@@ -371,7 +388,7 @@ A 重启（tools/launch_adminA.cmd，新 PID 26048）后最终 env 核验曾见 
 
 瓶颈链逐墙坐实：**binlog fsync（~30/s，F2-1）→ redo-log fsync（~88-95/s，F2-6）→ HikariCP 连接池 10 × ~10 往返/触发（~120/s，F2-8）→ 触发线程池 24（~150/s，P4b/F2-8修订）→ 双 admin 共享行锁串行化（~142/s，F6-1）**。
 
-统一根因 = **调度写放大**：每触发 3 次独立事务 commit（job_log 插入 / job_info.next_time 更新 / 回调更新）、~10 次 DB 往返 —— 同一杠杆在 fsync 墙、连接池墙、线程池墙、行锁墙下换着方式当瓶颈。**这是 ww-job 最核心的性能话题**：要突破 150/s 级需产品改造（触发线程池/连接池可配化、压缩每触发的 DB 往返、或分片/CAS 去锁），单纯调参只能在当前墙内挪动。
+统一根因 = **调度写放大**：每触发 3 次独立事务 commit（job_log 插入 / job_info.next_time 更新 / 回调更新）、~10 次 DB 往返 —— 同一杠杆在 fsync 墙、连接池墙、线程池墙、行锁墙下换着方式当瓶颈。**这是 ww-job 最核心的性能话题**：要突破 150/s 级需产品改造（触发线程池/连接池可配化、压缩每触发的 DB 往返、或分片/CAS 去锁），单纯调参只能在当前墙内挪动。**P1-SA 后单 admin 段已更新（2026-09-04 P12）：成功路径每触发 DB 往返 ~10→5，单 admin 稳态墙由 ~150/s 上移至 ~167/s（窗末 ~210/s），详见 §Phase10 F10-1；双 admin 行锁段与慢任务段结论不变。**
 
 两类容量维度独立（容量 = 负载画像的函数）：
 - **快任务**：受 admin 侧写放大限制（单 admin ~150/s，调连接池/触发池）；
@@ -423,7 +440,8 @@ A 重启（tools/launch_adminA.cmd，新 PID 26048）后最终 env 核验曾见 
 
 | 形态 | 快任务吞吐 | 说明 |
 | --- | --- | --- |
-| 单 admin，pool=30，双 fsync 关 | ~150/s | 墙=触发线程池 24 |
+| 单 admin，pool=30，双 fsync 关 | ~150/s | 墙=触发线程池 24（P1-SA 前） |
+| 单 admin，pool=30，双 fsync 关（**P1-SA 后**） | ~167/s（窗末~210） | 写放大 ~10→5 stmts/触发，墙由触发池 24 上移（P12，见 §Phase10 F10-1） |
 | 双 admin 同配置 | ~145/s | 不扩展，墙=共享行锁 |
 | 默认持久化（sync_binlog=1）单 admin | ~30/s | 第一道墙 binlog fsync（F2-1）——部署先定持久化级别再谈容量 |
 | 慢任务 param=2s 单 executor | ~12/s（24÷2s） | 与 D 无关，墙=执行器池 |
