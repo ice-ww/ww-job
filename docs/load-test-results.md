@@ -407,6 +407,7 @@ A 重启（tools/launch_adminA.cmd，新 PID 26048）后最终 env 核验曾见 
 | P0-1/2/3：TimeWheel 线程安全、触发无超时阻塞、路由策略失效（早期审查） | 已修复 |
 | F2-9：高负载下 stop 被 in-flight 触发旧实体 `updateById` 整写回「复活」 | **已修复 commit 1f0b7f2**：`JobTriggerServiceImpl` 的 dispatchOne ack 成功 + dispatch 超时/失败 tail 两处整实体 `updateById(job)` 收敛为新增 `JobInfoMapper.touchLastTime` 精确只更新 `trigger_last_time` 列；75 行 `claimNextTime` FOR UPDATE 锁内写回保留。确定性复现（`tools/repro_f29.py`，stall 超时窗口拉长到 10s）：修复前 REVIVED/exit 1 → 修复后 stopped/exit 0；demoHandler ack-success 回归：`trigger_last_time` 正常推进、`trigger_status` 保持 1、job_log SUCCESS |
 | F6-2：claimNextTime 秒边界竞态 → 同秒双 claim（非 SINGLE 任务 = 毫秒级连发两次的真实重复执行风险） | 已修复 commit 44e0b16，决定性 SQL=0 |
+| F6-2 副作用：44e0b16 秒截断在单/低负载 cron 引入饿死跳拍（≤~0.5Hz + 分钟级静默停摆；饱和下无感） | **待排期**（2026-09-04 P1-SA T6 回归发现，详见文末补记，非 P1-SA 回归） |
 | F4-3：告警对空 alarmConfig 完全静默 | 产品建议，未改（需产品决策） |
 
 ### 4.8 压测方法论沉淀（可复用于后续场景）
@@ -429,3 +430,26 @@ A 重启（tools/launch_adminA.cmd，新 PID 26048）后最终 env 核验曾见 
 | 混合 70/20/10 | ~98/s | 队头阻塞（F4-1） |
 
 **收尾状态**：Phase 1~9 全部归档（P1~P11 行 + §2 详情 + §3 收获）。环境已恢复（A=8080/B=8082/executor=8081 三进程在线、registry online=1、batch 全 disabled、job_log 无 status=0 残留）。测试工具与本文档未提交 git，待用户决定。
+
+---
+
+## 补记 2026-09-04：F6-2 修复（44e0b16）的低负载副作用 —— 单任务 cron 饿死
+
+> 与本文档压测（P8a/b/P9 均为 D=300 饱和负载）不同，本发现在 **P1 Stage A Task 6 回归**（低负载单任务）中暴露。记录于此以与 F6-2 同宗溯源。
+
+**发现场景**：P1-SA T6 回归 c7（1Hz 单任务连续触发 38s、期望 ≥28 条）仅得 4 条 → 判 FAIL。逐层排查（general_log 抓 claimNextTime 实达 SQL + 对照实验 probe_c7b 同 job cron 0 行 vs manual 1 行 + job 44 长窗间隔分布）**确认不是 P1-SA 回归**：Task5 改动（claim 返回 JobInfo 喂 trigger）链路全程验证无异常，且该饿死在 git 回看中由 44e0b16（F6-2 修复，压测已归档段即为此代码）引入，属 pre-existing 调度缺陷。
+
+**现象**（1Hz 单任务实测，job 44 窗 557s / 142 行 / 86% 间隔恰 2s）：
+- 健康相位下节拍 **≤~0.5Hz**（1Hz 配置跑成每 2s 一条）；
+- 周期性 **18s / 36s / 54s / 60s 静默停摆（stall）**，最坏 ~1min 整段零触发；
+- 单任务 cron **无法达到配置频率、且间歇整段跳拍**；多任务饱和（P8b/P9，任务数 ≫ 轮推进节奏）反而正常——**饿死只在低负载/少任务显现**，故原压测全程未见。
+
+**根因链**（承 F6-2 修复，JobTriggerServiceImpl.claimable + ScheduleHelper.advance）：
+1. 44e0b16 把幂等门从 `lastNext > now`（毫秒比较）收紧为 `lastNext < nowSec`（`nowSec = now - now%1000`，要求边界秒**整体过去**才放行）；
+2. TimeWheel 粗粒度 ~1000ms 推进，实际触发落点 ≈ 边界 B **+0.9s**（advance 节拍略 >1s 或线程切换），`nowSec` 截断后仍 = B → `lastNext(B) < nowSec(B)` 恒 false → **claim 被拒**；
+3. 被拒后 catch-up 把 next_time 推进到下一边界、同相位重新入轮 → 再次 ~+0.9s → 再次被拒 → **自锁**；仅当相位漂移（入轮时延/负载抖动使落点越过 B+1.0s、nowSec 翻到 B+1）才偶然获胜一次；
+4. 饱和下轮内积压把每次触发都推过 B+1.0s → 条件恒真 → 无感。原代码注释「正常时间轮触发恒在 next+1s」假设不成立（实测 +0.9s）；F6-2 防重的**真正来源是 FOR UPDATE 行锁 + 先推进 next_time**（claim 成功者独占、败者读到已推进值放弃），秒截断是叠加其上的副作用源。
+
+**影响面**：仅低负载单/少任务 cron——频率上限 ~0.5Hz 且含分钟级 stall；高负载、手动/分片触发、SINGLE 防重、正确性（无重复执行/无错终态）均不受影响。属**可用性/调度精度缺陷**，非数据正确性缺陷。
+
+**留待排期（刻意不塞进 P1-SA）**：候选修复方向——(a) 幂等门改毫秒门槛 `now >= lastNext + 1000`：既放行 +0.9s 的正常落点，又要求边界秒整体翻过（杜绝同秒双 claim），一处改动、语义最贴近原意；(b) claim 携带触发点做 CAS（`UPDATE ... WHERE next_time=旧值`），从根消除读-判-写竞态、双 admin 下同时根治。复测工具：`tools/probe_c7.py`（30s 盯 next_time/行数）、`tools/probe_c7b.py`（同 job cron vs manual 对照）、job-44 式间隔分布分析；c7 回归已按此放宽容忍（只验落行正确性：无同秒双触发 + 全 success，不断言频率）。
