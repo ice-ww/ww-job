@@ -91,16 +91,24 @@ public class ScheduleHelper {
             jobInfoMapper.advanceNextTime(job.getId(), next);   // 原 jobInfoMapper.updateById(job) → 窄更新
         }
         long delay = Math.max(0, next - now);
-        // 时间轮按 ~1010ms 粗粒度推进，任务实际触发 = 上次推进时刻 + delayTicks×实际节拍，
-        // 可能比目标边界提前最多一个 tick。提前到边界前会被 claimNextTime 拒绝，
-        // catch-up 推进后仍提前 → 拒绝死循环（即跳拍）。+TICK_MS 使 delayTicks=ceil(delay/1000)+1，
-        // 数学上保证 触发时刻 ≥ 边界（永不提前），至多晚一个 tick。
-        timeWheel.addTask(delay + TICK_MS, () -> {
+        // 时间轮按 ~1000ms 节拍推进，但 Windows sleep 可早醒使实际节拍 τ 略 <1000ms。
+        // delayTicks = ceil(delay/1000)+2（+2 ticks 安全量）：fire 时刻 = 入轮时刻 + delayTicks×τ，
+        // fire−边界 ≥ 2τ + delay(τ/1000−1)。τ≥950ms、delay≤5s 时 ≥1.65s → fire 恒落边界秒之后的整秒
+        // （nowSec > 边界）→ claimable 恒放行，零拒绝零跳拍。
+        // 只 +1 tick 时若 delay≡−1 mod 1000 且 τ<1000ms，fire 落进边界秒 [B,B+1s) 内被 claimable 拒绝
+        // （白花一把锁读、无 INSERT、advance 不动），scheduleLoop 见落后随即 catch-up 推进跳下一边界
+        // → 本边界 fire 丢失（实测脏窗 78% fire 尝试被拒，根治见上）。
+        timeWheel.addTask(delay + 2 * TICK_MS, () -> {
             try {
-                // 触发点幂等：行锁内先推进 next_time，返回非 null 才真正触发，并直接喂入锁内新鲜 job
-                JobInfo claimed = triggerService.claimNextTime(job.getId(), job.getCron());
-                if (claimed != null) {
-                    triggerService.trigger(claimed, "cron");   // 原 trigger(job.getId(),"cron")：不再二次 selectById
+                // 快路径（非 sharding）：claim+decide 合并单事务（B1），决策返回即事务已提交，dispatch 在事务外；
+                // sharding：维持 claim(独立事务)→broadcast 两段（父不变式 7，不进合并事务）
+                if ("sharding".equalsIgnoreCase(job.getRouteStrategy())) {
+                    JobInfo claimed = triggerService.claimNextTime(job.getId(), job.getCron());
+                    if (claimed != null) {
+                        triggerService.trigger(claimed, "cron");
+                    }
+                } else {
+                    triggerService.triggerCronFast(job.getId(), job.getCron());
                 }
             } finally {
                 scheduledJobIds.remove(job.getId());

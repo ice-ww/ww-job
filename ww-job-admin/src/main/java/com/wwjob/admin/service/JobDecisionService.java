@@ -4,6 +4,7 @@ import com.wwjob.admin.entity.JobInfo;
 import com.wwjob.admin.entity.JobLog;
 import com.wwjob.admin.mapper.JobInfoMapper;
 import com.wwjob.admin.mapper.JobLogMapper;
+import com.wwjob.core.util.CronUtil;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,7 +29,7 @@ public class JobDecisionService {
         this.routerService = routerService;
     }
 
-    /** 决策：行锁内判定 SINGLE 互斥（门）→ 门后 route → 地址直接写进 running log 的 INSERT。
+    /** 手动/API 决策：行锁读 → 锁下决策核心。事务在方法级开启，gate/route/insert 同锁原子。
      *  返回已落库的 log + 行锁内最新 job 供 dispatch 直接用；无执行器/被阻塞/无任务 → 返回 null。 */
     @Transactional
     public DecideResult decide(long jobId, String triggerType) {
@@ -36,9 +37,44 @@ public class JobDecisionService {
         if (job == null) {
             return null;
         }
+        return decideUnderLock(job, triggerType);
+    }
+
+    /** cron 到期触发决策（非 sharding）：单事务内 锁行 → status/claimable 门 → advance → SINGLE gate → route → INSERT。
+     *  返回 DecideResult 供事务外 dispatch；停用/边界未到/被阻塞/无执行器 → null（已落账或无需落账）。
+     *  事务次序钉死：advance 先于 gate（B-1，blocked 也消费本边界）；HTTP 由调用方在事务外分发。 */
+    @Transactional
+    public DecideResult decideCron(long jobId, String cron) {
+        JobInfo job = claimLocked(jobId, cron);
+        if (job == null) {
+            return null;
+        }
+        return decideUnderLock(job, "cron");
+    }
+
+    /** 锁下 claim 核心（非事务，须在调用方持锁事务内）：status 门 → claimable 门 → advanceNextTime。
+     *  停用 / 边界未到 / 已被别台推进 → null。advance 先于一切 gate（B-1：blocked 也消费本边界）。 */
+    public JobInfo claimLocked(long jobId, String cron) {
+        JobInfo job = jobInfoMapper.selectByIdForUpdate(jobId);
+        if (job == null || job.getTriggerStatus() == null || job.getTriggerStatus() != 1) {
+            return null;   // 任务不存在或已停用
+        }
+        long now = System.currentTimeMillis();
+        if (!claimable(job.getTriggerNextTime(), now)) {
+            return null;   // 已被别台推进 / 触发点边界秒尚未整体过去
+        }
+        long next = CronUtil.nextTime(cron, now);
+        jobInfoMapper.advanceNextTime(jobId, next);   // A4 窄更新
+        job.setTriggerNextTime(next);
+        return job;   // 推进后的锁内新鲜 job
+    }
+
+    /** 锁下决策核心（非事务，须在调用方持锁事务内）：SINGLE gate → route → INSERT。
+     *  入参 job 必须是行锁内读到的最新行（claimLocked/decide 已保证）。 */
+    public DecideResult decideUnderLock(JobInfo job, String triggerType) {
         boolean single = "SINGLE".equalsIgnoreCase(job.getBlockStrategy());
         if (single) {
-            long running = jobLogMapper.countRunning(jobId);
+            long running = jobLogMapper.countRunning(job.getId());
             if (running > 0) {
                 // 上一次执行尚未结束：丢弃本次触发。STATUS_BLOCKED=4（item5 拆分后口径）：被丢弃≠超时未知
                 // （handle_time=null ⇒ 不入告警/巡检，Dashboard 单独可见）；blocked 永不收回调，收账守卫 IN(0,3) 天然不含 4
@@ -48,7 +84,7 @@ public class JobDecisionService {
             }
         }
         // SINGLE gate 之后才 route：被阻塞的触发不消耗 registry 读
-        String address = routerService.route(job.getJobGroupId(), job.getRouteStrategy(), jobId);
+        String address = routerService.route(job.getJobGroupId(), job.getRouteStrategy(), job.getId());
         if (address == null) {
             // 无可用执行器：直接落失败日志（原 running→fail 两次写收敛为一次写），不分发。
             // handleCode/handleTime 保持空 —— 与旧 route==null 立即返回分支一致（旧代码此处不置位，
@@ -60,6 +96,19 @@ public class JobDecisionService {
         JobLog log = insertLog(job, triggerType, "已受理，等待执行结果",
                 JobLog.STATUS_RUNNING, null, null, address);
         return new DecideResult(log, job);
+    }
+
+    /**
+     * 触发点是否已可 claim：next_time 恒为秒边界（CronUtil 秒精度），毫秒级 now 直接比
+     * 会在边界秒翻过时误放行相邻点（败者 A 推到 10:47:04.000、败者 B 在 10:47:04.001 读到
+     * 10:47:04.000 > 10:47:04.001 为假 → 误 claim → 同秒双触发，F6-2）。
+     * 截断到秒：边界秒整体过去（nowSec > lastNext）才放行，杜绝同秒双 claim；正常时间轮
+     * 触发恒在 next+1s，nowSec 必大于边界，不受影响。
+     */
+    static boolean claimable(Long lastNext, long now) {
+        if (lastNext == null) return false;
+        long nowSec = now - (now % 1000);
+        return lastNext < nowSec;
     }
 
     /** 通用落库：插入一条 job_log（id 由 DB 回填）。handleCode/handleTime/executorAddress 可空。 */

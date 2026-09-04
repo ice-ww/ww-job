@@ -17,11 +17,16 @@ import java.time.LocalDateTime;
 @EnableScheduling
 public class RegistryCleaner {
     private final JobRegistryMapper registryMapper;
-    public RegistryCleaner(JobRegistryMapper registryMapper) { this.registryMapper = registryMapper; }
+    private final RegistryCacheService registryCacheService;
+
+    public RegistryCleaner(JobRegistryMapper registryMapper, RegistryCacheService registryCacheService) { this.registryMapper = registryMapper;
+        this.registryCacheService = registryCacheService;
+    }
 
     @Scheduled(fixedRate = 10000)
     public void clean() {
         LocalDateTime threshold = LocalDateTime.now().minusSeconds(JobRegistry.ONLINE_SECONDS);
         registryMapper.delete(new QueryWrapper<JobRegistry>().lt("heartbeat_time", threshold));
+        registryCacheService.prune(threshold);   // 同 90s 阈值：缓存与 DB cleaner 同语义
     }
 }

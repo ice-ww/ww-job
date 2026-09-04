@@ -20,14 +20,16 @@ import java.util.stream.Collectors;
 @Service
 public class ExecutorRouterService {
     private final JobRegistryMapper registryMapper;
+    private final RegistryCacheService registryCacheService;
     /** 路由实例保持为字段（单例）：内部计数器跨调用持续，轮询才能真正轮转。
      *  若每次 route() new 一个，AtomicInteger 恒从 0 开始，永远选中第一个执行器 */
     private final Router roundRobin = new RoundRobinRouter();
     private final Router random = new RandomRouter();
     private final Router failover = new FailoverRouter();
 
-    public ExecutorRouterService(JobRegistryMapper registryMapper) {
+    public ExecutorRouterService(JobRegistryMapper registryMapper, RegistryCacheService registryCacheService) {
         this.registryMapper = registryMapper;
+        this.registryCacheService = registryCacheService;
     }
 
     public String route(long jobGroupId, String routeStrategy, long jobId) {
@@ -42,11 +44,19 @@ public class ExecutorRouterService {
 
     public List<String> onlineAddresses(long jobGroupId) {
         LocalDateTime threshold = LocalDateTime.now().minusSeconds(JobRegistry.ONLINE_SECONDS);
-        return registryMapper.selectList(new QueryWrapper<JobRegistry>()
-                        .eq("job_group_id", jobGroupId)
-                        .ge("heartbeat_time", threshold))
-                .stream().map(JobRegistry::getRegistryValue)
-                .collect(Collectors.toList());
+        // 稳态：缓存有新鲜 → 0 DB（B2 目标）
+        List<String> cached = registryCacheService.online(jobGroupId, threshold);
+        if (!cached.isEmpty()) {
+            return cached;
+        }
+        // B-2：组内无新鲜（冷启动/与执行器分区/全部离线）→ 回退 DB 复核并水合，语义与现状 DB 逐格一致
+        List<JobRegistry> rows = registryMapper.selectList(new QueryWrapper<JobRegistry>()
+                .eq("job_group_id", jobGroupId)
+                .ge("heartbeat_time", threshold));
+        if (!rows.isEmpty()) {
+            rows.forEach(r -> registryCacheService.touch(jobGroupId, r.getRegistryValue(), r.getHeartbeatTime()));
+        }
+        return rows.stream().map(JobRegistry::getRegistryValue).collect(Collectors.toList());
     }
 
 }

@@ -6,7 +6,6 @@ import com.wwjob.admin.mapper.JobInfoMapper;
 import com.wwjob.admin.mapper.JobLogMapper;
 import com.wwjob.core.model.ReturnT;
 import com.wwjob.core.model.TriggerParam;
-import com.wwjob.core.util.CronUtil;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -62,37 +61,22 @@ public class JobTriggerServiceImpl implements JobTriggerService {
         dispatch(result, triggerType);
     }
 
-    /** 触发点幂等：行锁内判断本次触发点是否已被别台分配，未分配则先推进 next_time 再放行 */
+    /** 触发点幂等：行锁内判断本次触发点是否已被别台分配，未分配则先推进 next_time 再放行。
+     *  锁下核心已收敛到 JobDecisionService.claimLocked（B1a）；此处保留 @Transactional 作 sharding
+     *  路径独立 claim 事务边界，跨 bean 调用经 proxy 加入该事务。 */
     @Transactional
     @Override
     public JobInfo claimNextTime(long jobId, String cron) {
-        JobInfo job = jobInfoMapper.selectByIdForUpdate(jobId);
-        if (job == null || job.getTriggerStatus() == null || job.getTriggerStatus() != 1) {
-            return null;   // 任务不存在或已停用
-        }
-        long now = System.currentTimeMillis();
-        if (!claimable(job.getTriggerNextTime(), now)) {
-            return null;   // 已被别台推进 / 触发点边界秒尚未整体过去
-        }
-        long next = CronUtil.nextTime(cron, now);
-        jobInfoMapper.advanceNextTime(jobId, next);   // 窄更新推进（A4，已就位）
-        job.setTriggerNextTime(next);
-        return job;   // 返回锁内新鲜 job，调度器喂给 trigger(job)
+        return jobDecisionService.claimLocked(jobId, cron);
     }
 
-    /**
-     * 触发点是否已可 claim：next_time 恒为秒边界（CronUtil 秒精度），毫秒级 now 直接比
-     * 会在边界秒翻过时误放行相邻点（败者 A 推到 10:47:04.000、败者 B 在 10:47:04.001 读到
-     * 10:47:04.000 > 10:47:04.001 为假 → 误 claim → 同秒双触发，F6-2）。
-     * 截断到秒：边界秒整体过去（nowSec > lastNext）才放行，杜绝同秒双 claim；正常时间轮
-     * 触发恒在 next+1s，nowSec 必大于边界，不受影响。
-     */
-    static boolean claimable(Long lastNext, long now) {
-        if (lastNext == null) return false;
-        long nowSec = now - (now % 1000);
-        return lastNext < nowSec;
+    @Override
+    public void triggerCronFast(long jobId, String cron) {
+        DecideResult result = jobDecisionService.decideCron(jobId, cron);   // 跨 bean @Transactional：合并决策单事务
+        if (result != null) {
+            dispatch(result, "cron");   // decideCron 返回即事务已提交，HTTP 在锁窗外
+        }
     }
-
 
     private void broadcast(JobInfo job, String triggerType) {
         List<String> addresses = routerService.onlineAddresses(job.getJobGroupId());
